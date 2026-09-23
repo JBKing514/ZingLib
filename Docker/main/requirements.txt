@@ -1,0 +1,38 @@
+# Runtime dependencies, pinned exactly.
+#
+# Every entry is `==`. A range like `fastapi>=0.115.0` resolves to whatever is
+# current on the day the image is built, which means a version number stops
+# identifying an artefact: two builds of "v1.0.0" get different code. That is
+# the opposite of what a version number is for.
+#
+# These pins were read from the image that passed the round-42 regression suite
+# (backend 17/17, HTTP 83/83, tag replay, upload, chunked upload, probes), so
+# the set is known-good together, not merely recent.
+#
+# Bumping a pin is a normal change -- do it deliberately, and re-run the
+# container regression before tagging, because these are the versions the
+# migrations and the vector code were tested against.
+#
+# Removed 2026-09-20 after verifying zero imports anywhere under Docker/main:
+#   httpx, requests-unixsocket, pandas, beautifulsoup4, lxml, plotly, rapidfuzz
+# NOTE: dropping httpx also broke fastapi.testclient (an indirect consumer).
+# Test-only extras now live in requirements-dev.txt; keep them out of here.
+# (bs4/lxml/requests-unixsocket were crawling-era leftovers; the rewritten XP
+# service no longer needs plotly on the server side -- the UI renders with
+# plotly.js from npm.)
+#
+# `requests` is kept: services/ai_provider.py uses it to reach the operator's
+# own local OpenAI-compatible /v1 endpoint.
+
+requests==2.34.2
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.2
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+apscheduler==3.11.3
+scikit-learn==1.9.1
+scipy==1.17.1
+numpy==2.4.6
+cryptography==50.0.1
+python-multipart==0.0.32
+Pillow==12.3.0

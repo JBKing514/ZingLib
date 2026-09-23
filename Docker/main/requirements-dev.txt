@@ -1,0 +1,13 @@
+# Test-only dependencies. Deliberately NOT part of requirements.txt, so the
+# runtime image stays free of HTTP clients the app itself never uses.
+#
+#   pip install -r Docker/main/requirements-dev.txt
+#
+# httpx2: Starlette 1.x imports this distribution directly for TestClient.
+# Keep it test-only so the runtime image stays free of an HTTP client used only
+# by regression probes.
+#
+# Pinned for the same reason as requirements.txt: an unpinned test dependency
+# turns "the suite is green" into a claim about a different day's dependency
+# tree.
+httpx2==2.13.1

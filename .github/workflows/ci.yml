@@ -1,0 +1,224 @@
+name: ci
+
+# Everything here runs from the repository alone -- no development host, no
+# containers of ours, no secrets. Three jobs, mirroring what the project
+# actually verifies before a release:
+#
+#   release-guards  migrations / version single source / pinned dependencies
+#   frontend        the production bundle and the node-side contract tests
+#   backend         the webapi unit suite against a real pgvector database
+#
+# The backend job deliberately reproduces the image's layout rather than
+# approximating it: the same `requirements.txt`, a pgvector service, the built
+# `dist` mounted where the Dockerfile puts it (`webapi/static`), and the same
+# migration entry point `entrypoint.sh` calls. A CI that passes against a
+# different layout is a CI that certifies nothing.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  release-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      # Three scripts, all stdlib-only. They are tracked on purpose (unlike the
+      # workspace-level `tools/` guards) so a clone can run them.
+      - name: migration single source
+        run: python scripts/check_migrations.py
+      - name: version single source
+        run: python scripts/check_version_consistency.py
+      - name: dependencies and base images pinned
+        run: python scripts/check_deps_pinned.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Docker/main/webapp
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: Docker/main/webapp/package-lock.json
+      # `npm ci`, not `npm install`: the build input is the lockfile, and `ci`
+      # fails instead of silently resolving ranges to a different tree.
+      - name: install
+        run: npm ci --no-audit --no-fund
+      - name: build (production bundle)
+        run: npm run build
+      - name: node-side contract tests
+        run: node --test test_*.mjs
+      # The backend job mounts these exactly where the Dockerfile does, so the
+      # app-importing tests see the version.json and PWA assets they expect.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webapp-dist
+          path: Docker/main/webapp/dist
+          if-no-files-found: error
+
+  backend:
+    needs: frontend
+    runs-on: ubuntu-latest
+    services:
+      pg:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lrr_library
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lrr_library"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Config resolution is `db > json > env`, and a fresh checkout has neither
+      # a database-written config nor a json file, so the suite reads this DSN.
+      POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/lrr_library?sslmode=disable
+      DATA_UI_RUNTIME_DIR: ${{ github.workspace }}/.ci-runtime
+      DATA_UI_LOCAL_LIB_DIR: ${{ github.workspace }}/.ci-runtime/local_lib
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: install runtime + test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r Docker/main/requirements.txt -r Docker/main/requirements-dev.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: webapp-dist
+          path: Docker/main/webapi/static
+      - name: prepare the runtime directory
+        run: mkdir -p "$DATA_UI_RUNTIME_DIR/logs" "$DATA_UI_LOCAL_LIB_DIR"
+      # The same entry point `entrypoint.sh` calls on every container start, with
+      # the same arguments. Backups are off: there is nothing to lose here.
+      - name: apply migrations
+        working-directory: Docker/main
+        run: |
+          python textIngest/db_migrations.py \
+            --dsn "$POSTGRES_DSN" \
+            --migrations-dir "$PWD/textIngest/migrations" \
+            --log "$DATA_UI_RUNTIME_DIR/logs/db_init.log" \
+            --app-version-file "$PWD/webapi/static/version.json" \
+            --no-backup
+      # Same shape as the in-container runner: every module, tallied, exit
+      # non-zero if any of them failed. Run as modules (`python -m`), never as
+      # scripts -- a script run cannot import `webapi.*`.
+      - name: backend unit tests
+        working-directory: Docker/main
+        run: |
+          pass=0
+          fail=0
+          for t in webapi/test_*.py; do
+            mod="webapi.$(basename "$t" .py)"
+            echo "===== $mod ====="
+            if python -m "$mod"; then
+              echo "RESULT PASS $mod"
+              pass=$((pass + 1))
+            else
+              echo "RESULT FAIL $mod"
+              fail=$((fail + 1))
+            fi
+          done
+          echo "SUMMARY pass=$pass fail=$fail"
+          test "$fail" -eq 0
+
+  # Publishing is deliberately part of this workflow and depends on every test
+  # job. A broken commit can therefore never race CI and reach Docker Hub.
+  docker-publish:
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/publish' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [release-guards, frontend, backend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate Docker Hub configuration
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          test -n "$DOCKERHUB_USERNAME" || {
+            echo "Missing repository variable: DOCKERHUB_USERNAME" >&2
+            exit 1
+          }
+          test -n "$DOCKERHUB_TOKEN" || {
+            echo "Missing repository secret: DOCKERHUB_TOKEN" >&2
+            exit 1
+          }
+
+      - name: Require release tag to match application version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          app_version="$(python -c 'import json; print(json.load(open("Docker/main/webapp/public/version.json", encoding="utf-8"))["version"])')"
+          tag_version="${RELEASE_TAG#v}"
+          test "$tag_version" = "$app_version" || {
+            echo "Release tag $RELEASE_TAG does not match application version $app_version" >&2
+            exit 1
+          }
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          scope: ${{ vars.DOCKERHUB_USERNAME }}/zinglib@push
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Generate image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ vars.DOCKERHUB_USERNAME }}/zinglib
+          tags: |
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/publish' }}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.title=ZingLib
+            org.opencontainers.image.description=Local-first multimodal manga and illustration library
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push multi-platform image
+        uses: docker/build-push-action@v7
+        with:
+          context: Docker/main
+          file: Docker/main/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=zinglib-release
+          cache-to: type=gha,mode=max,scope=zinglib-release
+          provenance: mode=max
+          sbom: true

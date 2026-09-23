@@ -1,0 +1,40 @@
+# ZingLib, core service only.
+#
+# For the "manual / split-host" path: start the database separately
+# (`pg17_docker-compose.yml`, or your own PostgreSQL with the `pgvector`
+# extension) and point this service at it. If you want both containers in one
+# file, use `quick_deploy_docker-compose.yml` instead -- that is the template the
+# README and STARTUP walk you through.
+#
+# The image name is a placeholder on purpose: this repository publishes no
+# prebuilt image, so build your own (see STARTUP.md) and substitute it here or
+# export ACTUAL_IMAGE in your shell / .env.
+services:
+  data-ui:
+    image: ${ACTUAL_IMAGE:?set ACTUAL_IMAGE to your built zinglib image, e.g. zinglib:local}
+    container_name: zinglib
+    command: ["data-ui"]
+
+    ports:
+      - "8501:8501"
+
+    environment:
+      # The one thing this file must not leave out: without a DSN the app starts
+      # but cannot reach its database. <db-host> is the host running PostgreSQL
+      # (use `host.docker.internal` for the same machine on Docker Desktop).
+      POSTGRES_DSN: "${POSTGRES_DSN:-postgresql://postgres:postgres@<db-host>:5432/lrr_library?sslmode=disable}"
+      # Needed when PostgreSQL runs on the same network as the app container and
+      # an HTTP proxy is configured, so local traffic bypasses the proxy.
+      no_proxy: "${no_proxy:-localhost,127.0.0.1}"
+
+    volumes:
+      # Runtime directory: model weights, local library, thumbnails, per-gallery
+      # backups (`.zinglib_meta/`) and the database migration log. Back this up.
+      - ${YOUR_LOCAL_PATH:-./zinglib/runtime}:/app/runtime
+
+    ulimits:
+      nofile:
+        soft: ${DATA_UI_NOFILE_SOFT:-65535}
+        hard: ${DATA_UI_NOFILE_HARD:-65535}
+
+    restart: unless-stopped

@@ -1,0 +1,29 @@
+# Build context is `main/` (see the COPY paths in main/Dockerfile).
+# Keep the context small and free of local state.
+
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.DS_Store
+**/*.log
+**/*.tmp
+**/*.swp
+
+**/.env
+**/.venv/
+**/venv/
+
+# The frontend is compiled inside the image by the `webbuild` stage; the local
+# node_modules / dist copies must never be sent to the daemon.
+webapp/node_modules/
+webapp/dist/
+
+# static/ is populated by COPY --from=webbuild, not from the context.
+webapi/static/
+
+# Local runtime state (also mounted at /app/runtime in compose).
+runtime/

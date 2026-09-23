@@ -1,0 +1,46 @@
+services:
+  pg17:
+    image: pgvector/pgvector:pg17
+    container_name: pgvector-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}   # <-- 数据库用户名，默认为 postgres/Default username for the database, default is postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres} # <-- 数据库密码，默认为 postgres/Default password for the database, default is postgres
+      POSTGRES_DB: ${POSTGRES_DB:-lrr_library} # <-- 数据库名称，默认为 lrr_library/Default database name, default is lrr_library
+    ports:
+      - "5432:5432"
+    volumes:
+      - ${POSTGRES_DATA_DIR:-./zinglib/pgvector}:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lrr_library}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  data-ui:
+    image: {ACTUAL_IMAGE} # <-- 请替换为实际的镜像名称和标签
+    container_name: zinglib
+    command: ["data-ui"]
+
+    ports:
+      - "8501:8501"
+    ulimits:
+      nofile:
+        soft: ${DATA_UI_NOFILE_SOFT:-65535}
+        hard: ${DATA_UI_NOFILE_HARD:-65535}
+    environment:
+      THUMB_CLIENT_ROTATE_S: ${THUMB_CLIENT_ROTATE_S:-1200}
+      THUMB_CLIENT_KEEPALIVE_EXPIRY_S: ${THUMB_CLIENT_KEEPALIVE_EXPIRY_S:-8}
+      #如果你在国内网络环境下使用，并且需要通过 HTTP 代理访问外部资源，请取消下列注释并设置以下环境变量（替换 YOUR_PROXY_HOST 和 YOUR_PROXY_PORT）：
+      #Pleasue uncomment the following lines if you are using in a domestic network environment and need to access external resources through an HTTP proxy:
+      #如果你使用了代理，并且需要让容器内的应用访问本地服务（如数据库），请确保 no_proxy 环境变量中包含 localhost，和pgvector的IP地址，以避免代理干扰本地通信。
+      #If you are using a proxy and need to allow applications within the container to access local services (like the database), make sure to include localhost and the IP address of pgvector in the no_proxy environment variable to prevent the proxy from interfering with local communication.
+      #no_proxy: localhost,${PGVECTOR_IP:-172.16.0.2}
+      #http_proxy: http://{YOUR_PROXY_HOST}:{YOUR_PROXY_PORT:-8888},
+      #https_proxy: http://{YOUR_PROXY_HOST}:{YOUR_PROXY_PORT:-8888}
+    volumes:
+      - ${YOUR_LOCAL_PATH:-./zinglib/runtime}:/app/runtime
+    restart: unless-stopped
+    depends_on:
+      pg17:
+        condition: service_healthy

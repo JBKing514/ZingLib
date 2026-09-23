@@ -1,0 +1,91 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.code-workspace
+*~
+*.swp
+*.swo
+
+# Python bytecode, test caches and environments
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+
+# JavaScript package and build output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+Docker/main/webapp/vite.config.js.timestamp-*.mjs
+
+# Generated web bundle copied into the Python image
+Docker/main/webapi/static/
+Docker/webapi/
+
+# Local configuration and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs, temporary files and local databases
+*.log
+*.tmp
+*.temp
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+*.pid
+
+# Docker and application runtime data
+Docker/**/runtime/
+Docker/**/hf_cache/
+Docker/**/pgdata/
+Docker/shared/
+Docker/pgdata/
+Docker/n8n_data/
+Docker/local-files/
+Docker/autoehhunter/
+
+# Downloaded models and binary caches
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+models/
+hf_cache/
+
+# Workspace-only tooling and agent state; these are not clone-time guards
+/.agents/
+/.workbuddy/
+/.codex/
+/tools/
+AGENTS.md
+
+# Internal reports and scratch output
+.merge_file_*
+project_evaluation.md
+debug_rules.md
+current_status.md
+DEV_STATUS.md
+test_output.txt
+Docker/main/webapi/set_dev_mode.py

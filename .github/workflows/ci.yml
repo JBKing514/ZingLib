@@ -95,6 +95,7 @@ jobs:
       POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/lrr_library?sslmode=disable
       DATA_UI_RUNTIME_DIR: ${{ github.workspace }}/.ci-runtime
       DATA_UI_LOCAL_LIB_DIR: ${{ github.workspace }}/.ci-runtime/local_lib
+      DATA_UI_THUMB_GALLARY_DIR: ${{ github.workspace }}/.ci-runtime/thumb_gallery
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -109,7 +110,7 @@ jobs:
           name: webapp-dist
           path: Docker/main/webapi/static
       - name: prepare the runtime directory
-        run: mkdir -p "$DATA_UI_RUNTIME_DIR/logs" "$DATA_UI_LOCAL_LIB_DIR"
+        run: mkdir -p "$DATA_UI_RUNTIME_DIR/logs" "$DATA_UI_LOCAL_LIB_DIR" "$DATA_UI_THUMB_GALLARY_DIR"
       # The same entry point `entrypoint.sh` calls on every container start, with
       # the same arguments. Backups are off: there is nothing to lose here.
       - name: apply migrations

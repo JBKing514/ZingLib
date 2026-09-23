@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from webapi.main import app
 from webapi.services.local_lib_service import _safe_join_local_dir
 from webapi.services.db_service import db_dsn
-from webapi.services.auth_service import create_session, get_session_user
+from webapi.services.auth_service import _invalidate_bootstrap_cache, create_session, get_session_user
 from webapi.core.middleware import AUTH_COOKIE_NAME, AUTH_CSRF_COOKIE_NAME
 
 
@@ -49,18 +49,13 @@ def test_path_length_error_suppression():
     if skip_without_testclient("test 1 -- /api/local-lib/folder/mkdir probe"):
         return
 
-    # Test the API endpoint using TestClient
     client = TestClient(app)
-    # We bypass authentication because it's a test of the exception handler itself,
-    # let's trigger it on an endpoint that uses _safe_join_local_dir.
-    # For example, folder mkdir or list_local_gallery_pages.
-    # But wait, those require auth. Let's see if we can trigger an unhandled ValueError.
-    # Let's call /api/local-lib/folder/list with a long path. Since it starts with /api,
-    # it requires login. We can mock or log in, or we can just test the exception handler directly.
-    # Let's check how the exception handler is tested: we can call a request that raises ValueError.
     response = client.post("/api/local-lib/folder/mkdir", json={"parent_path": "", "name": long_path})
-    # If it is unauthorized, it returns 401. Let's provide a mock token or session.
     print(f"mkdir response status: {response.status_code}, body: {response.text}")
+    assert response.status_code == 400
+    payload = response.json()
+    assert "too long" in str(payload.get("detail") or "").lower()
+    assert "traceback" not in payload
 
 
 def _drop_test_user(uid: str) -> None:
@@ -71,6 +66,7 @@ def _drop_test_user(uid: str) -> None:
                 cur.execute("DELETE FROM ui_sessions WHERE uid = %s::uuid", (uid,))
                 cur.execute("DELETE FROM ui_users WHERE uid = %s::uuid", (uid,))
             conn.commit()
+        _invalidate_bootstrap_cache()
         print(f"[cleanup] removed test user {uid}")
     except Exception as exc:  # noqa: BLE001
         print(f"[cleanup] could not remove test user {uid}: {exc}")
@@ -97,6 +93,7 @@ def test_sliding_session_renewal():
                     (uid, username),
                 )
             conn.commit()
+        _invalidate_bootstrap_cache()
         _sliding_session_renewal_body(dsn, uid)
     finally:
         _drop_test_user(uid)

@@ -131,9 +131,11 @@ def _safe_rel_file_path(raw: str) -> str:
 def _safe_folder_name(raw: str) -> str:
     name = str(raw or "").strip().strip("/").strip("\\")
     if not name or name in {".", ".."}:
-        raise ValueError("invalid folder name")
+        raise HTTPException(status_code=400, detail="invalid folder name")
     if "/" in name or "\\" in name:
-        raise ValueError("folder name cannot contain path separators")
+        raise HTTPException(status_code=400, detail="folder name cannot contain path separators")
+    if len(name.encode("utf-8")) > _MAX_COMPONENT_BYTES:
+        raise HTTPException(status_code=400, detail="File name too long")
     return name
 
 

@@ -36,7 +36,7 @@ It starts two containers:
 | `zinglib` | ZingLib itself (published image) | 8501 |
 
 * The application uses the public image `jbking114514/zinglib:latest` by default; add `ZINGLIB_IMAGE=zinglib:local` for your own build.
-* The database defaults to **`zinglib_library`**, user `postgres`, password `postgres`; override with `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD`.
+* The database defaults to **`zinglib_library`**, user `postgres`, password `postgres`; override with `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` (the same group is passed to both the database and the application container).
 * Data lands in **`Docker/zinglib/`, beside the compose file** (relative paths inside a compose file resolve against that
   file, not against your current directory): the database in `Docker/zinglib/pgvector/`, the application runtime in
   `Docker/zinglib/runtime/`. Use `POSTGRES_DATA_DIR` and `YOUR_LOCAL_PATH` to move either elsewhere (the repository-root
@@ -47,8 +47,9 @@ All backend APIs, scheduled tasks and the WebUI are unified inside the applicati
 > **In the Setup Wizard, enter**: host `zinglib-db`, port `5432`, user `postgres`, password `postgres`, database `zinglib_library`.
 > The application and the database share the compose network, where both `zinglib-db` (container name) and `pg17`
 > (service name) resolve.
-> ⚠️ The database name must be **`zinglib_library`** -- the built-in default inside the application code is
-> `lrr_library`, so do not just accept the prefilled value.
+> ⚠️ Those are exactly the defaults `pg17` is started with. If you changed `POSTGRES_DB` / `POSTGRES_USER` /
+> `POSTGRES_PASSWORD` in `.env`, enter the **changed** values here -- the compose file passes the same group to the
+> application, so the prefilled values are yours.
 >
 > On first start `docker logs zinglib` shows `WARN db-init skipped: POSTGRES_DSN is empty` -- **that is expected**:
 > with no connection details there is nothing to migrate, and the application still starts so you can reach the

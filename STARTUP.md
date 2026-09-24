@@ -35,7 +35,7 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 | `zinglib` | ZingLib 本体（公开镜像） | 8501 |
 
 * 应用默认用公开镜像 `jbking114514/zinglib:latest`；要用自己构建的，加 `ZINGLIB_IMAGE=zinglib:local`。
-* 数据库默认 **`zinglib_library`**，用户 `postgres`，密码 `postgres`；可用 `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` 覆盖。
+* 数据库默认 **`zinglib_library`**，用户 `postgres`，密码 `postgres`；可用 `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` 覆盖（同一组值会同时传给数据库与应用两个容器）。
 * 数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径是相对 **compose 文件**解析的，不是相对当前目录）：
   数据库在 `Docker/zinglib/pgvector/`，应用 runtime 在 `Docker/zinglib/runtime/`。
   想把它们挪到别处（比如仓库根的 `zinglib/`），用 `POSTGRES_DATA_DIR` 与 `YOUR_LOCAL_PATH` 指过去即可。
@@ -44,7 +44,8 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 
 > **Setup Wizard 里数据库那一栏填**：主机 `zinglib-db`、端口 `5432`、用户 `postgres`、密码 `postgres`、数据库 `zinglib_library`。
 > 应用与数据库在同一个 compose 网络里，`zinglib-db`（容器名）与 `pg17`（服务名）都能解析。
-> ⚠️ 数据库名要填 **`zinglib_library`** —— 应用代码里的内置默认库名是 `lrr_library`，别照抄预填值。
+> ⚠️ 这几个值就是 compose 里 `pg17` 的默认值；如果你在 `.env` 里改过 `POSTGRES_DB` / `POSTGRES_USER` /
+> `POSTGRES_PASSWORD`，向导里要填**改过之后**的值 —— compose 会把同一组值传给应用，所以预填值就是它。
 >
 > 首次启动时 `docker logs zinglib` 里会有 `WARN db-init skipped: POSTGRES_DSN is empty` —— **这是正常的**：
 > 还没有连接信息时不可能迁移，应用仍然会起来让你走向导；向导保存连接后**应用会自己建表与跑迁移**，不需要重启容器。

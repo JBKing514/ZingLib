@@ -112,6 +112,30 @@ export const useDashboardStore = defineStore("dashboard", () => {
     { immediate: true }
   );
 
+  // Opening the filter dialog snapshots the live filters; closing it without
+  // Apply puts them back. The minimum-rating slider filters the rows on screen
+  // as it moves (categories and tags only bite on the next fetch), so the
+  // dialog's own Cancel button would be a lie without this.
+  //
+  // The rollback lives on the close edge of this one watcher rather than in
+  // `cancelHomeFilters`, because the Cancel button is not the only way out:
+  // `v-dialog` defaults to `persistent: false`, so a backdrop click and Esc both
+  // write `homeFiltersOpen = false` straight through the v-model without
+  // touching any handler, and `closeAllOverlayPanels` closes it too. Apply is
+  // the one exit that must keep the edits, so it drops the snapshot before
+  // closing -- that is the whole "commit" signal.
+  const homeFiltersDraft = ref(null);
+  watch(homeFiltersOpen, (open) => {
+    if (open) {
+      homeFiltersDraft.value = JSON.parse(JSON.stringify(homeFilters.value || {}));
+      return;
+    }
+    if (homeFiltersDraft.value) {
+      homeFilters.value = homeFiltersDraft.value;
+      homeFiltersDraft.value = null;
+    }
+  });
+
   let _getConfig = () => ({});
   let _configRef = null;
   let _getLang = () => "zh";
@@ -822,6 +846,9 @@ export const useDashboardStore = defineStore("dashboard", () => {
   }
 
   async function applyHomeFilters() {
+    // Commit: drop the snapshot first, so the watcher's close edge sees nothing
+    // to roll back and the edits survive.
+    homeFiltersDraft.value = null;
     homeFiltersOpen.value = false;
     if (String(homeSearchQuery.value || "").trim()) {
       await rerunSearchWithFilters();

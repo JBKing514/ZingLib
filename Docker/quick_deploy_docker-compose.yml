@@ -18,6 +18,10 @@ services:
       - ${POSTGRES_DATA_DIR:-./zinglib/pgvector}:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
+      # `pg_isready` only reports whether the server answers -- it never checks
+      # that the named database exists (`-d definitely_not_here` also returns
+      # "accepting connections"). `-d` here just keeps the probe honest about
+      # which server we mean to be talking to.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-zinglib_library}"]
       interval: 10s
       timeout: 5s
@@ -39,6 +43,25 @@ services:
     environment:
       THUMB_CLIENT_ROTATE_S: ${THUMB_CLIENT_ROTATE_S:-1200}
       THUMB_CLIENT_KEEPALIVE_EXPIRY_S: ${THUMB_CLIENT_KEEPALIVE_EXPIRY_S:-8}
+      # The same coordinates `pg17` was just started with, so one `.env` drives
+      # both sides. Without them the application falls back to the spec defaults
+      # in `webapi/core/constants.py`, and a `.env` that renames the database,
+      # the user or the password would move the database container and leave the
+      # app still connecting to the old name.
+      #
+      # On a brand-new database the app still lands in the Setup Wizard: there
+      # is no config table to read yet, so these decide which values the wizard
+      # starts from rather than skipping it. On an existing install they lose to
+      # the saved config (resolution order is db > json > env).
+      POSTGRES_HOST: ${POSTGRES_HOST:-zinglib-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-zinglib_library}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
+      # `POSTGRES_DSN` is deliberately not forwarded: `_build_dsn` rebuilds the
+      # URL from the parts above whenever host, user and database are all set,
+      # so a DSN here would be silently ignored.
     volumes:
       - ${YOUR_LOCAL_PATH:-./zinglib/runtime}:/app/runtime
     restart: unless-stopped

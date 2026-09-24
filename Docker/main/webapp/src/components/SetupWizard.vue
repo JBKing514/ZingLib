@@ -381,7 +381,7 @@ const setupForm = reactive({
   DATA_UI_THEME_OLED: false,
   POSTGRES_HOST: "localhost",
   POSTGRES_PORT: 5432,
-  POSTGRES_DB: "lrr_library",
+  POSTGRES_DB: "zinglib_library",
   POSTGRES_USER: "postgres",
   POSTGRES_PASSWORD: "",
   POSTGRES_SSLMODE: "prefer",

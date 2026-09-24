@@ -805,11 +805,6 @@ export default {
       _longPressBodyPrevOverflow: "",
       _longPressBodyPrevTouchAction: "",
       _longPressAbortOpen: false,
-      // What the filter dialog looked like when it opened. The minimum-rating
-      // slider filters the rows on screen as it moves (categories and tags only
-      // bite on the next fetch), so "cancel" has to put the state back or the
-      // button would be a lie.
-      _homeFiltersDraft: null,
     };
   },
   computed: {
@@ -1030,12 +1025,6 @@ export default {
         this.showDesktopHoverPreview = false;
         this.desktopHoverPreviewItem = null;
       }
-    },
-    // The dialog can be opened from three places (the search row, the toolbar
-    // button and the shell's quick action), so the snapshot lives on the open
-    // edge rather than in whichever handler happened to fire.
-    homeFiltersOpen(next) {
-      this._homeFiltersDraft = next ? JSON.parse(JSON.stringify(this.homeFilters || {})) : null;
     },
     showMobilePreview(next) {
       if (next) {
@@ -1316,11 +1305,10 @@ export default {
         this._syncingRouteTab = false;
       });
     },
-    // Dismiss the filter dialog without touching the feed: no refetch, and the
-    // live minimum-rating filter goes back to what it was.
+    // Dismiss the filter dialog without touching the feed. Closing is all this
+    // has to do: the store rolls the live filters back on the close edge, which
+    // also covers a backdrop click and Esc.
     cancelHomeFilters() {
-      const draft = this._homeFiltersDraft;
-      if (draft) this.homeFilters = draft;
       this.homeFiltersOpen = false;
     },
     onRefreshClick() {

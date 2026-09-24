@@ -119,9 +119,21 @@ test("a rebuilt preview card starts at the top of the new gallery", () => {
 test("both filter panels can be dismissed, not only by tapping the scrim", () => {
   const dash = read("./src/views/DashboardScopePage.vue");
   const explore = read("./src/components/dashboard/TagExploreOverlay.vue");
+  const store = read("./src/stores/dashboardStore.js");
+  // Esc and a scrim tap write the dialog's open flag to false without calling any
+  // handler (`v-dialog` is not persistent), so the rollback has to hang off the
+  // close edge of that flag -- and Apply has to drop the snapshot first, which is
+  // the only thing that distinguishes "keep my edit" from "put it back".
   assert.match(dash, /@click="cancelHomeFilters">{{ t\('home\.filter\.cancel'\) }}/);
-  assert.match(dash, /cancelHomeFilters\(\) \{[\s\S]*?this\.homeFilters = draft;[\s\S]*?this\.homeFiltersOpen = false;/);
-  assert.match(explore, /@click="filtersOpen = false">{{ t\('home\.filter\.cancel'\) }}/);
+  assert.doesNotMatch(dash, /_homeFiltersDraft/, "the rollback is on the store's close edge, not in the view");
+  assert.match(store, /homeFiltersDraft = ref\(null\)/);
+  assert.match(store, /JSON\.parse\(JSON\.stringify\(homeFilters\.value/);
+  assert.match(store, /watch\(homeFiltersOpen, \(open\) => \{[\s\S]*?homeFilters\.value = homeFiltersDraft\.value;/);
+  assert.match(store, /async function applyHomeFilters\(\) \{[\s\S]*?homeFiltersDraft\.value = null;/);
+  assert.match(explore, /@click="cancelFilters">{{ t\('home\.filter\.cancel'\) }}/);
+  assert.match(explore, /filtersDraft = ref\(null\)/);
+  assert.match(explore, /watch\(filtersOpen, \(openNow\) => \{[\s\S]*?filters\.value = filtersDraft\.value;/);
+  assert.match(explore, /function applyFilters\(\) \{[\s\S]*?filtersDraft\.value = null;/);
 
   for (const locale of ["zh", "en"]) {
     const dict = JSON.parse(read(`./src/i18n/${locale}.json`));

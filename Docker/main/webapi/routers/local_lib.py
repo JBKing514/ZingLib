@@ -1177,7 +1177,14 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
 
     ``dry_run`` reports what would be touched without writing. Archives are
     handled by `write_comicinfo` (it rewrites the member in place, not the file).
+
+    The tag re-apply guard mirrors the one on the restore: that job rewrites
+    ``works.tags`` for the whole library in chunks, and this route copies
+    ``works.tags`` onto disk. Interleaving them would put a pre-run tag set into
+    ComicInfo.xml, which the next scan would then read back over the newer
+    database values -- the stale representation the job exists to remove.
     """
+    _reject_if_tag_reapply_running("metadata writeback")
     req = dict(payload or {})
     dry_run = bool(req.get("dry_run") or False)
     want_comicinfo = bool(req.get("comicinfo", True))

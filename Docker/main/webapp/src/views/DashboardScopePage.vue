@@ -277,7 +277,16 @@
             @advance="onPagerNext"
           />
           <div v-if="activeHomeState.loading" class="text-center py-3"><v-progress-circular indeterminate color="primary" size="24" /></div>
-          <div v-else-if="!filteredHomeItems.length" class="text-center text-medium-emphasis py-8">{{ t('home.empty') }}</div>
+          <div v-else-if="!filteredHomeItems.length" class="text-center text-medium-emphasis py-8">
+            <template v-if="libraryEmptyWithoutFilters">
+              <div class="text-body-1 mb-1">{{ t('home.empty_library') }}</div>
+              <div class="text-caption mb-3">{{ t('home.empty_library_hint') }}</div>
+              <v-btn color="primary" variant="tonal" prepend-icon="mdi-upload" @click="goToUploader">
+                {{ t('home.empty_library_action') }}
+              </v-btn>
+            </template>
+            <template v-else>{{ t('home.empty') }}</template>
+          </div>
           </div>
 
           <div v-if="longPressPickerOpen" class="longpress-picker-backdrop" />
@@ -1006,6 +1015,13 @@ export default {
     },
   },
   methods: {
+    // Uploading galleries lives in the toolbox file manager, not on the feed, so
+    // the empty-library state has to hand the user the path to it -- otherwise
+    // "your library is empty" is a dead end for someone who skipped the setup
+    // wizard's upload step.
+    goToUploader() {
+      this.$router.push({ path: "/tools", query: { tab: "file_manager" } }).catch(() => null);
+    },
     onCardClick(item) {
       if (Date.now() < Number(this._longPressSuppressClickUntil || 0)) return;
       this.openHomeItem(item);

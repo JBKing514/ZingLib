@@ -97,3 +97,11 @@ current_status.md
 DEV_STATUS.md
 test_output.txt
 Docker/main/webapi/set_dev_mode.py
+
+# Windows reserved device names written by a mistyped `>NUL` or by
+# `ssh -o UserKnownHostsFile=NUL`. They are real files in the working tree yet
+# cannot be deleted by path, so never let one reach a commit.
+NUL
+CON
+AUX
+PRN

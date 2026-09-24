@@ -62,17 +62,18 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 
 ```bash
 docker network create zinglib-net
-docker run -d --name zinglib-db --network zinglib-net \
+docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
   -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zinglib_library \
   -p 5432:5432 -v /path/to/pgvector:/var/lib/postgresql/data \
   pgvector/pgvector:pg17
-docker run -d --name zinglib --network zinglib-net \
+docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 -v /path/to/runtime:/app/runtime \
   jbking114514/zinglib:latest data-ui
 ```
 
 两个容器必须在同一个自建网络里，否则应用解析不到数据库。数据库在**另一台机器**时去掉 `--network`，
 改用 `-e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/zinglib_library?sslmode=disable'` 直接交给应用。
+`--restart unless-stopped` 别省：备份还原完成后应用会**自己重启**来接回自动向量化，没有重启策略就会直接停在关机状态。
 
 **方式三：从源码构建（备选）**
 

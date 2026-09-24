@@ -59,7 +59,7 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 docker network create zinglib-net
 
 # 2) 数据库（PostgreSQL 17 + pgvector）
-docker run -d --name zinglib-db --network zinglib-net \
+docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=zinglib_library \
@@ -68,13 +68,15 @@ docker run -d --name zinglib-db --network zinglib-net \
   pgvector/pgvector:pg17
 
 # 3) 应用
-docker run -d --name zinglib --network zinglib-net \
+docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 \
   -v /path/to/runtime:/app/runtime \
   jbking114514/zinglib:latest data-ui
 ```
 
 * Setup Wizard 里数据库主机填 **`zinglib-db`**（同一自建网络内按容器名解析）。
+* 🔴 **`--restart unless-stopped` 不要省**：备份还原完成后应用会**自己重启**来接回自动向量化
+  （还原期间它主动暂停了那个监听），没有重启策略的话它会直接停在关机状态。
 * **跨机 / 用外部数据库**：去掉 `--network`，改用环境变量直接把 DSN 交给应用，
   向导里就不用再填连接信息了：
   ```bash

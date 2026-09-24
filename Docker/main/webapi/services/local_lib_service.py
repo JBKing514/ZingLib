@@ -3,7 +3,6 @@ import io
 import json
 import os
 import re
-import shutil
 import tempfile
 import threading
 import time
@@ -327,14 +326,22 @@ def translation_tag_suggestions(kw: str, limit: int = 20) -> list[str]:
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"}
-# Directory prefixes the scanner refuses to descend into. `migrated` is the
-# historical LRR-import graveyard; `.staging` is where the upload flow parks
-# files before the user has confirmed which galleries to import; `.zinglib_meta`
-# holds the per-gallery sidecars written by `gallery_metadata_backup` (the
-# vectors and history that must survive a database rebuild). All three have to
-# stay invisible to ingestion -- a half-reviewed upload or a backup file must
-# never be turned into a library entry.
-SCAN_SKIP_PREFIXES = ("migrated", ".staging", ".zinglib_meta")
+# Directory prefixes the scanner refuses to descend into. `.staging` is where the
+# upload flow parks files before the user has confirmed which galleries to
+# import; `.zinglib_meta` holds the per-gallery sidecars written by
+# `gallery_metadata_backup` (the vectors and history that must survive a database
+# rebuild). Both have to stay invisible to ingestion -- a half-reviewed upload or
+# a backup file must never be turned into a library entry -- and the file manager
+# hides them for the same reason (see `_folder_list_payload`).
+#
+# `migrated` used to be on this list as "the historical LRR-import graveyard".
+# It is not one anymore: nothing in the codebase writes or expects it (the only
+# remaining trace was this entry and its comment), while real libraries put real
+# galleries under `migrated/`. Skipping it meant those galleries were neither
+# scanned nor even *listed* in the file manager, with nothing on screen to explain
+# the absence. A folder that happens to contain only subfolders is walked into
+# like any other -- `os.walk` descends and each subfolder is judged on its own.
+SCAN_SKIP_PREFIXES = (".staging", ".zinglib_meta")
 
 
 def _natural_sort_key(s: str) -> list[Any]:
@@ -582,101 +589,6 @@ def local_metadata_gaps(limit: int = 200, offset: int = 0, gap_type: str = "all"
     }
 
 
-def _can_flatten_single_nested(local_dir: str) -> tuple[bool, Path | None, Path | None]:
-    try:
-        root = _safe_join_local_dir(local_dir)
-    except Exception:
-        return False, None, None
-    if not root.exists() or not root.is_dir():
-        return False, None, None
-
-    root_files = [x for x in root.iterdir() if x.is_file()]
-    if any(_is_allowed_image(x) for x in root_files):
-        return False, root, None
-
-    subdirs = [x for x in root.iterdir() if x.is_dir()]
-    if len(subdirs) != 1:
-        return False, root, None
-    inner = subdirs[0]
-    if not any(x.is_file() and _is_allowed_image(x) for x in inner.rglob("*")):
-        return False, root, inner
-    return True, root, inner
-
-
-def local_flatten_gaps(limit: int = 500, offset: int = 0) -> dict[str, Any]:
-    safe_limit = max(1, min(2000, int(limit or 500)))
-    safe_offset = max(0, int(offset or 0))
-    rows = query_rows(
-        "SELECT arcid, title, local_dir FROM works "
-        "WHERE source = 'local' AND COALESCE(local_dir, '') <> '' "
-        "ORDER BY COALESCE(date_added, 0) DESC, arcid DESC OFFSET %s LIMIT %s",
-        (safe_offset, safe_limit),
-    )
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        arcid = str(r.get("arcid") or "").strip()
-        title = str(r.get("title") or "").strip()
-        local_dir = str(r.get("local_dir") or "").strip()
-        ok, _root, inner = _can_flatten_single_nested(local_dir)
-        if not ok:
-            continue
-        out.append(
-            {
-                "arcid": arcid,
-                "title": title,
-                "local_dir": local_dir,
-                "inner_dir": str(inner.name if inner is not None else ""),
-            }
-        )
-    return {"items": out, "offset": safe_offset, "limit": safe_limit}
-
-
-def flatten_local_dirs(arcids: list[str]) -> dict[str, Any]:
-    todo = [str(x or "").strip() for x in (arcids or []) if str(x or "").strip()]
-    if not todo:
-        return {"ok": True, "done": 0, "failed": 0, "rows": []}
-    rows = query_rows(
-        "SELECT arcid, local_dir FROM works WHERE source = 'local' AND arcid = ANY(%s::text[])",
-        (todo,),
-    )
-    by_arcid = {str(r.get("arcid") or "").strip(): str(r.get("local_dir") or "").strip() for r in rows}
-    out: list[dict[str, Any]] = []
-    done = 0
-    failed = 0
-    for arcid in todo:
-        local_dir = by_arcid.get(arcid, "")
-        if not local_dir:
-            failed += 1
-            out.append({"ok": False, "arcid": arcid, "reason": "local work not found"})
-            continue
-        ok, root, inner = _can_flatten_single_nested(local_dir)
-        if not ok or root is None or inner is None:
-            failed += 1
-            out.append({"ok": False, "arcid": arcid, "reason": "not single nested gallery"})
-            continue
-        moved = 0
-        for item in inner.iterdir():
-            dst = root / item.name
-            if dst.exists():
-                continue
-            try:
-                shutil.move(str(item), str(dst))
-                moved += 1
-            except Exception:
-                continue
-        try:
-            inner.rmdir()
-        except Exception:
-            pass
-        if moved > 0:
-            done += 1
-            out.append({"ok": True, "arcid": arcid, "moved": moved})
-        else:
-            failed += 1
-            out.append({"ok": False, "arcid": arcid, "reason": "no file moved"})
-    return {"ok": True, "done": done, "failed": failed, "rows": out}
-
-
 def _meta_error(
     arcid: str,
     *,
@@ -869,7 +781,7 @@ def _pick_title_from_mode(meta: dict[str, Any], fallback_title: str, title_mode:
     return title or title_jpn or fallback
 
 
-# Tags the user picked by hand have to survive a metadata refetch / tag
+# Tags the user picked by hand have to survive a metadata enrich / tag
 # re-apply, because both rebuild works.tags from the ComicInfo source. That used
 # to be the job of the `user:` marker the editor wrote -- now retired, since
 # there is no online source left to tell native tags apart from. The editor
@@ -1046,6 +958,16 @@ def enrich_local_work_metadata(
     raw_obj["tags_translate"] = list(raw_obj.get("tags_translated") or [])
     raw_obj["title_mode"] = safe_title_mode
     raw_obj["tag_mode"] = safe_tag_mode
+    # Stamp the table identity next to the mode. The re-apply job decides "does
+    # this row already match the current table?" from the PAIR (tag_mode AND
+    # tag_sig, see tag_reapply_service._MARKER_FILTER), so a row carrying only the
+    # mode never matches: its `tag_sig` reads as empty against any table. Ingest
+    # translated these tags against exactly this table, yet the settings page
+    # announced "N works have tags not yet recomputed against the current table"
+    # the moment the library was read -- a false positive that invited the user to
+    # run a re-apply which then changed nothing. Stamping the signature is what
+    # makes that count converge to zero.
+    raw_obj["tag_sig"] = translation_signature()
 
     try:
         query_rows(
@@ -1067,7 +989,7 @@ def enrich_local_work_metadata(
             # Patch raw per key instead of replacing the whole object. The
             # ComicInfo snapshot only owns the keys it produces, while other
             # writers (the reader stores raw.bookmark, the metadata editor
-            # stores raw.user_meta) must survive a refetch.
+            # stores raw.user_meta) must survive an enrich.
             "raw = COALESCE(w.raw, '{}'::jsonb) || (COALESCE(%s::jsonb, '{}'::jsonb) - 'user_meta'), "
             "last_seen_at = now() "
             "WHERE arcid = %s",

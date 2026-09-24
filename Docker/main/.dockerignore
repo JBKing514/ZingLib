@@ -27,3 +27,11 @@ webapi/static/
 
 # Local runtime state (also mounted at /app/runtime in compose).
 runtime/
+
+# Windows reserved device names (`ssh -o UserKnownHostsFile=NUL` creates a real
+# file called NUL here). It holds a host key and has no business in the image or
+# the build context.
+NUL
+CON
+AUX
+PRN

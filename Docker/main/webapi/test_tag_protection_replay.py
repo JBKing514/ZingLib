@@ -3,13 +3,14 @@
 Regression: a hand-picked tag must survive the two paths that rebuild
 `works.tags` from the ComicInfo source.
 
-`enrich_local_work_metadata` (重新获取元数据) and `tag_reapply_service`
-(标签重放) both recompute `works.tags` as `source tags || PROTECTED_TAGS_SQL`.
+`enrich_local_work_metadata` (the scanner's metadata enrich) and
+`tag_reapply_service` (标签重放) both recompute `works.tags` as
+`source tags || PROTECTED_TAGS_SQL`.
 That used to be the job of the `user:` prefix the editor wrote, which is now
 retired: the editor mirrors hand-picked tags into `raw.user_meta.tags` and the
 fragment has to read them from there.
 
-This has to be guarded because a miss is completely silent -- the refetch or
+This has to be guarded because a miss is completely silent -- the enrich or
 the re-apply reports success and the tag is simply gone.
 
 Four cases:

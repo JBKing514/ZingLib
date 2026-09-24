@@ -1,9 +1,6 @@
-import hashlib
-import os
 import re
 import threading
 import time
-from datetime import datetime
 from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import quote
@@ -12,79 +9,17 @@ from fastapi import HTTPException
 
 from ..core.config_values import as_bool as _cfg_bool
 from ..core.config_values import as_bool as _as_bool
-from ..core.constants import THUMB_CACHE_DIR
 from .ai_provider import _extract_tags_by_llm, _llm_timeout_s, _provider_embedding
-from .config_service import ensure_dirs, resolve_config, _runtime_tzinfo
+from .config_service import resolve_config
 from .db_service import query_rows
 from .vision_service import _embed_image_siglip, _embed_text_siglip, _model_status
 
 
-def _thumb_cache_file(key: str):
-    digest = hashlib.sha256(str(key).encode("utf-8", errors="ignore")).hexdigest()
-    return THUMB_CACHE_DIR / f"{digest}.bin"
-
-
-def _cache_read(key: str) -> bytes | None:
-    p = _thumb_cache_file(key)
-    try:
-        if p.exists() and p.is_file() and p.stat().st_size > 0:
-            return p.read_bytes()
-    except Exception:
-        return None
-    return None
-
-
-def _cache_write(key: str, data: bytes) -> None:
-    if not data:
-        return
-    ensure_dirs()
-    p = _thumb_cache_file(key)
-    tmp = p.with_suffix(f".{time.time_ns()}.tmp")
-    try:
-        tmp.write_bytes(data)
-        os.replace(tmp, p)
-    except Exception:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return
-
-
-def _thumb_cache_stats() -> dict[str, Any]:
-    ensure_dirs()
-    total = 0
-    count = 0
-    latest = 0.0
-    for p in THUMB_CACHE_DIR.glob("*.bin"):
-        try:
-            st = p.stat()
-            total += int(st.st_size)
-            count += 1
-            latest = max(latest, float(st.st_mtime))
-        except Exception:
-            continue
-    return {
-        "files": count,
-        "bytes": total,
-        "mb": round(total / (1024 * 1024), 2),
-        "latest_at": datetime.fromtimestamp(latest, tz=_runtime_tzinfo()).isoformat(timespec="seconds") if latest > 0 else "-",
-    }
-
-
-def _clear_thumb_cache() -> dict[str, Any]:
-    ensure_dirs()
-    deleted = 0
-    freed = 0
-    for p in THUMB_CACHE_DIR.glob("*.bin"):
-        try:
-            st = p.stat()
-            freed += int(st.st_size)
-            p.unlink(missing_ok=True)
-            deleted += 1
-        except Exception:
-            continue
-    return {"deleted": deleted, "freed_bytes": freed, "freed_mb": round(freed / (1024 * 1024), 2)}
+# The EH-era `thumb_cache` directory and the four helpers that read, wrote and
+# sized it are gone: nothing has written a `*.bin` there since the library went
+# local-only, so the settings chip was permanently reporting 0 files and its
+# "Clear" button freed 0 MB while overlapping the real thumbnail purge in
+# 本地库 -> 清空缩略图缓存 (which owns THUMB_GALLARY_DIR).
 
 
 def _contains_cjk(s: str) -> bool:

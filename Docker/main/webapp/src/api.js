@@ -420,13 +420,11 @@ export function stagedGalleryThumbUrl(batchId, path, preset = "") {
   return `/api/local-lib/upload/thumb?${params.toString()}`;
 }
 
+// The metadata-gap report is read by 工具箱 -> 元数据管理器 only; the settings
+// page's duplicate panel, its "refetch metadata" button and the flatten action
+// are gone (the scanner mirrors nested galleries itself).
 export async function getLocalMetadataGaps(params = {}) {
   const { data } = await api.get("/local-lib/metadata-gaps", { params });
-  return data;
-}
-
-export async function refetchLocalMetadata(payload = {}) {
-  const { data } = await api.post("/local-lib/metadata/refetch", payload || {});
   return data;
 }
 
@@ -438,20 +436,18 @@ export async function restoreLocalMetadata(payload = {}) {
   return data;
 }
 
+// The other direction: write the database's metadata back onto disk
+// (ComicInfo.xml + the `.zinglib_meta` sidecar). `{ dry_run: true }` reports what
+// would be touched, so the caller can confirm before anything is written.
+export async function writebackLocalMetadata(payload = {}) {
+  const { data } = await api.post("/local-lib/metadata/writeback", payload || {}, { timeout: 0 });
+  return data;
+}
+
 export async function downloadLocalMetadataRestoreLog(logId) {
   const safe = String(logId || "").trim();
   const res = await api.get(`/local-lib/metadata/restore-log/${encodeURIComponent(safe)}`, { responseType: "blob" });
   return res.data;
-}
-
-export async function getLocalFlattenGaps(params = {}) {
-  const { data } = await api.get("/local-lib/flatten-gaps", { params });
-  return data;
-}
-
-export async function runLocalFlatten(payload = {}) {
-  const { data } = await api.post("/local-lib/flatten", payload || {});
-  return data;
 }
 
 export async function deleteLocalGallery(payload = {}) {
@@ -524,20 +520,11 @@ export async function searchHybrid(payload = {}) {
   return data;
 }
 
-export async function getThumbCacheStats() {
-  const { data } = await api.get("/cache/thumbs");
-  return data;
-}
-
-export async function clearThumbCache() {
-  const { data } = await api.delete("/cache/thumbs");
-  return data;
-}
-
-export async function getThumbRuntimeStats() {
-  const { data } = await api.get("/thumb/runtime-stats");
-  return data;
-}
+// The EH-era `/cache/thumbs` (stats + clear) and `/thumb/runtime-stats` wrappers
+// are gone with the backend routes and the settings chip: nothing wrote a
+// `*.bin` into `runtime/webui/thumb_cache` any more, so the chip was a permanent
+// "0 files" and the button freed 0 MB. The live thumbnails are purged from
+// 设置 -> 本地库 -> 清空缩略图缓存, which owns `runtime/thumb_gallary`.
 
 export async function getTranslationStatus() {
   const { data } = await api.get("/translation/status");

@@ -369,7 +369,6 @@ async function initializeAppData() {
     settingsStore.loadConfigData(),
     controlStore.loadDashboard(),
     resetHomeFeed(),
-    settingsStore.loadThumbCacheStats(),
     settingsStore.loadTranslationStatus(),
     settingsStore.loadModelStatus(),
   ]);

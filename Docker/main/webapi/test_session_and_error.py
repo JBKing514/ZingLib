@@ -50,12 +50,45 @@ def test_path_length_error_suppression():
         return
 
     client = TestClient(app)
-    response = client.post("/api/local-lib/folder/mkdir", json={"parent_path": "", "name": long_path})
-    print(f"mkdir response status: {response.status_code}, body: {response.text}")
-    assert response.status_code == 400
-    payload = response.json()
-    assert "too long" in str(payload.get("detail") or "").lower()
-    assert "traceback" not in payload
+    # The route sits behind the auth middleware, so an anonymous request is
+    # answered with 401 before the validation this test is about ever runs. That
+    # is the state of any install that already has an admin; CI has none (a fresh
+    # runtime dir), so the unauthenticated request reached the guard there and the
+    # assertion only ever failed in a real container. Mint a session so the request
+    # is answered by the path-length check on both.
+    dsn = db_dsn()
+    uid = str(uuid.uuid4())
+    headers: dict[str, str] = {}
+    try:
+        if dsn:
+            with psycopg.connect(dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO ui_users (uid, username, password_hash, role, disabled, created_at) "
+                        "VALUES (%s::uuid, %s, 'hash', 'admin', false, now())",
+                        (uid, f"testuser_mkdir_{int(time.time())}"),
+                    )
+                conn.commit()
+            _invalidate_bootstrap_cache()
+            token, sess = create_session(dsn, uid, ttl_hours=2)
+            client.cookies.set(AUTH_COOKIE_NAME, token)
+            client.cookies.set(AUTH_CSRF_COOKIE_NAME, str(sess.get("csrf_token") or ""))
+            headers["x-csrf-token"] = str(sess.get("csrf_token") or "")
+        response = client.post(
+            "/api/local-lib/folder/mkdir",
+            json={"parent_path": "", "name": long_path},
+            headers=headers,
+        )
+        print(f"mkdir response status: {response.status_code}, body: {response.text}")
+        assert response.status_code == 400, (
+            f"expected the path-length guard to answer 400, got {response.status_code}: {response.text[:200]}"
+        )
+        payload = response.json()
+        assert "too long" in str(payload.get("detail") or "").lower()
+        assert "traceback" not in payload
+    finally:
+        if dsn:
+            _drop_test_user(uid)
 
 
 def _drop_test_user(uid: str) -> None:

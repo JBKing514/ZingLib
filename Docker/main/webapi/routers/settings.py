@@ -22,6 +22,7 @@ from ..services.config_service import (
     _save_db_config,
     _save_json_config,
     apply_runtime_timezone,
+    default_credentials_in_use,
     ensure_dirs,
     now_iso,
     resolve_config,
@@ -34,7 +35,6 @@ from ..services.local_lib_service import (
     validate_translation_table,
 )
 from ..services.schedule_service import sync_scheduler
-from ..services.search_service import _clear_thumb_cache, _thumb_cache_stats
 from ..services.setup_service import init_core_schema, validate_db_connection
 from ..services.vision_service import (
     _clear_runtime_pydeps,
@@ -209,12 +209,16 @@ def get_config() -> dict[str, Any]:
             secret_state[key] = bool(str(cfg.get(key, "")).strip())
         else:
             values[key] = cfg.get(key, _normalize_value(key, spec.get("default", "")))
+    # The "you are still on the example credentials" banner is only honest when
+    # the values really are the shipped ones, so the decision is made here from
+    # the resolved config rather than assumed in the UI.
+    meta = {**meta, "security_defaults": default_credentials_in_use(cfg)}
     return {"values": values, "secret_state": secret_state, "meta": meta}
 
 
 @router.put("/api/config")
 def update_config(req: ConfigUpdateRequest, request: Request) -> dict[str, Any]:
-    cfg, _ = resolve_config()
+    cfg, meta = resolve_config()
     new_cfg = dict(cfg)
     for key, spec in CONFIG_SPECS.items():
         if key not in req.values:
@@ -227,6 +231,13 @@ def update_config(req: ConfigUpdateRequest, request: Request) -> dict[str, Any]:
     new_cfg["POSTGRES_DSN"] = _build_dsn(new_cfg)
     _save_json_config(new_cfg)
     ok_db, db_err = _save_db_config(new_cfg.get("POSTGRES_DSN", ""), new_cfg)
+    # `saved_db: false` only means "something is broken" when the database was
+    # reachable *before* this save. On the setup screen there is nothing to write
+    # to yet -- the JSON copy is the whole truth until the wizard has a working
+    # DSN -- and reporting a failure there put "save failed" on the very first
+    # screen a new user sees, for typing into a form that cannot be saved yet.
+    # Distinguish the two states so the UI can stay quiet about the expected one.
+    db_pending = (not ok_db) and (not bool(meta.get("db_connected")))
     try:
         siglip_worker_enabled = _as_bool(new_cfg.get("SIGLIP_WORKER_ENABLED"), True)
         if siglip_worker_enabled:
@@ -238,7 +249,13 @@ def update_config(req: ConfigUpdateRequest, request: Request) -> dict[str, Any]:
         pass
     apply_runtime_timezone()
     sync_scheduler()
-    return {"ok": True, "saved_json": True, "saved_db": ok_db, "db_error": db_err}
+    return {
+        "ok": True,
+        "saved_json": True,
+        "saved_db": None if db_pending else bool(ok_db),
+        "db_pending": bool(db_pending),
+        "db_error": "" if db_pending else db_err,
+    }
 
 
 @router.get("/api/config/app-config/download")
@@ -282,16 +299,6 @@ async def restore_app_config_json(file: UploadFile = File(...)) -> dict[str, Any
         "updated_at": datetime.fromtimestamp(APP_CONFIG_FILE.stat().st_mtime, tz=_runtime_tzinfo()).isoformat(timespec="seconds"),
         "note": "Restored runtime app_config.json only. Database config is unchanged.",
     }
-
-
-@router.get("/api/cache/thumbs")
-def thumb_cache_stats_api() -> dict[str, Any]:
-    return _thumb_cache_stats()
-
-
-@router.delete("/api/cache/thumbs")
-def thumb_cache_clear_api() -> dict[str, Any]:
-    return {"ok": True, **_clear_thumb_cache()}
 
 
 @router.get("/api/translation/status")

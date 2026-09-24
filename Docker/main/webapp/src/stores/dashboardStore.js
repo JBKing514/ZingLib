@@ -152,6 +152,22 @@ export const useDashboardStore = defineStore("dashboard", () => {
     return out;
   });
 
+  // True when the local feed is empty for the honest reason: this library holds
+  // no galleries at all, as opposed to "your filters matched nothing". Only the
+  // first deserves an offer to upload, and the difference is invisible from
+  // `filteredHomeItems` alone because the category/tag filters are applied by the
+  // server, not in that computed.
+  const libraryEmptyWithoutFilters = computed(() => {
+    if (!isLocalGalleryTab()) return false;
+    const f = homeFilters.value || {};
+    const anyFilter =
+      (f.categories || []).length > 0 || (f.tags || []).length > 0 || Number(f.minRating || 0) > 0;
+    if (anyFilter) return false;
+    const state = homeLocal.value || {};
+    if (state.loading || state.error) return false;
+    return !(state.items || []).length;
+  });
+
   // --- presentation mode (infinite scroll vs paged) --------------------------
   // Both modes drive the same feeds through the same endpoints; the difference
   // is whether a fetch appends to what is on screen or replaces it with one
@@ -1201,6 +1217,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     pinnedHomeFilterCategoryDefs,
     activeHomeState,
     filteredHomeItems,
+    libraryEmptyWithoutFilters,
     feedLastFetchedAt,
     quickFabStyle,
     t,

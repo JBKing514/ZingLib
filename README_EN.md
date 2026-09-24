@@ -63,11 +63,11 @@ For when you want to control each step, or reuse a PostgreSQL you already run:
 
 ```bash
 docker network create zinglib-net
-docker run -d --name zinglib-db --network zinglib-net \
+docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
   -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zinglib_library \
   -p 5432:5432 -v /path/to/pgvector:/var/lib/postgresql/data \
   pgvector/pgvector:pg17
-docker run -d --name zinglib --network zinglib-net \
+docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 -v /path/to/runtime:/app/runtime \
   jbking114514/zinglib:latest data-ui
 ```
@@ -75,6 +75,8 @@ docker run -d --name zinglib --network zinglib-net \
 Both containers must share the network you create, or the application cannot resolve the database. If the database is
 on **another machine**, drop `--network` and hand the application a DSN instead:
 `-e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/zinglib_library?sslmode=disable'`.
+Do not drop `--restart unless-stopped`: after a metadata restore the application **restarts itself** to take automatic
+embedding back, and without a restart policy it would simply stay down.
 
 **Option 3 -- build from source (fallback)**
 

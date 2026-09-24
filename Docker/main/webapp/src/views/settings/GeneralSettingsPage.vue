@@ -15,8 +15,16 @@
     </v-row>
   </v-card>
 
-  <v-alert closable type="warning" variant="tonal" class="mb-4">
-    {{ t('settings.security.password_reminder') }}
+  <!-- Shown only while the shipped database credentials are still in effect.
+       The backend decides that from the resolved config (`meta.security_defaults`)
+       because a banner that is always on is a banner nobody reads; it is an
+       error, not a warning, precisely because it is rare and actionable. -->
+  <v-alert v-if="securityDefaults.in_use" closable type="error" variant="tonal" class="mb-4">
+    <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('settings.security.password_risky_title') }}</div>
+    <div>{{ t('settings.security.password_reminder') }}</div>
+    <div v-if="securityDefaultFields" class="text-caption mt-1">
+      {{ t('settings.security.password_default_fields', { fields: securityDefaultFields }) }}
+    </div>
   </v-alert>
 
   <v-card class="pa-4 mb-4">
@@ -155,10 +163,6 @@
           auto-select-first
         />
       </v-col>
-      <v-col cols="12" md="8" class="d-flex align-center ga-2">
-        <v-chip variant="tonal" color="info">{{ t('settings.cache.stats', { files: thumbCacheStats.files || 0, mb: thumbCacheStats.mb || 0, latest: thumbCacheStats.latest_at || '-' }) }}</v-chip>
-        <v-btn variant="outlined" color="warning" @click="clearThumbCacheAction">{{ t('settings.cache.clear') }}</v-btn>
-      </v-col>
       <v-col cols="12" md="12">
         <div class="text-caption text-medium-emphasis">Version: {{ appVersion || '-' }}</div>
       </v-col>
@@ -255,6 +259,14 @@ export default {
       return { label: tt("health.db.unavailable"), color: "warning" };
     });
 
+    // Which shipped default credentials are still in use, decided by the backend
+    // from the resolved config (see `/api/config` -> meta.security_defaults).
+    const securityDefaults = computed(() => settingsStore.configMeta?.security_defaults || {});
+    const securityDefaultFields = computed(() => {
+      const fields = Array.isArray(securityDefaults.value.fields) ? securityDefaults.value.fields : [];
+      return fields.map((name) => tt(`settings.security.field.${name}`)).join(" / ");
+    });
+
     settingsUnlocked.value = appStore.isRecoveryMode;
 
     watch(() => appStore.isRecoveryMode, (isRecovery) => {
@@ -325,6 +337,8 @@ export default {
       unlockPassword,
       unlockLoading,
       dbConnState,
+      securityDefaults,
+      securityDefaultFields,
       appVersion,
       rebuildDialog, rebuildPassword, rebuilding, confirmRebuild,
       onUnlockChange,

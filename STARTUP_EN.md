@@ -66,7 +66,7 @@ on another machine).
 docker network create zinglib-net
 
 # 2) the database (PostgreSQL 17 + pgvector)
-docker run -d --name zinglib-db --network zinglib-net \
+docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=zinglib_library \
@@ -75,13 +75,16 @@ docker run -d --name zinglib-db --network zinglib-net \
   pgvector/pgvector:pg17
 
 # 3) the application
-docker run -d --name zinglib --network zinglib-net \
+docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 \
   -v /path/to/runtime:/app/runtime \
   jbking114514/zinglib:latest data-ui
 ```
 
 * In the Setup Wizard the database host is **`zinglib-db`** (resolved by container name inside the network you created).
+* 🔴 **Do not drop `--restart unless-stopped`**: after a metadata restore the application **restarts itself** to take
+  automatic embedding back (it suspends that watcher for the duration of the restore), and without a restart policy it
+  would simply stay down.
 * **Another machine / an external database**: drop `--network` and hand the application a DSN instead, so the wizard
   needs no connection details at all:
   ```bash

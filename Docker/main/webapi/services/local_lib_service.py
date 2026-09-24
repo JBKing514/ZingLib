@@ -1024,13 +1024,26 @@ def enrich_local_work_metadata(
     }
 
 
-def write_comicinfo(local_dir: str, title: str, tags: list[str]) -> bool:
+def comicinfo_target_exists(local_dir: str) -> bool:
+    """Can ``write_comicinfo`` put anything at this path at all?
+
+    ``write_comicinfo`` refuses a path that does not resolve or does not exist, so
+    a caller that previews the work (the metadata writeback's ``dry_run``) has to
+    ask the same question. It lives here, next to the writer, and is the *only*
+    implementation of that check -- a second copy would drift and the preview
+    would start promising writes the confirmed run then skips.
+    """
     try:
         base = _safe_join_local_dir(local_dir)
     except Exception:
         return False
-    if not base.exists():
+    return base.exists()
+
+
+def write_comicinfo(local_dir: str, title: str, tags: list[str]) -> bool:
+    if not comicinfo_target_exists(local_dir):
         return False
+    base = _safe_join_local_dir(local_dir)
 
     tags_str = ", ".join(tags)
     genres: list[str] = []

@@ -216,9 +216,14 @@ def get_config() -> dict[str, Any]:
     return {"values": values, "secret_state": secret_state, "meta": meta}
 
 
+def _db_write_pending(ok_db: bool, had_saved_config: bool) -> bool:
+    return (not ok_db) and (not had_saved_config)
+
+
 @router.put("/api/config")
 def update_config(req: ConfigUpdateRequest, request: Request) -> dict[str, Any]:
-    cfg, meta = resolve_config()
+    cfg, _ = resolve_config()
+    had_saved_config = APP_CONFIG_FILE.exists()
     new_cfg = dict(cfg)
     for key, spec in CONFIG_SPECS.items():
         if key not in req.values:
@@ -231,13 +236,18 @@ def update_config(req: ConfigUpdateRequest, request: Request) -> dict[str, Any]:
     new_cfg["POSTGRES_DSN"] = _build_dsn(new_cfg)
     _save_json_config(new_cfg)
     ok_db, db_err = _save_db_config(new_cfg.get("POSTGRES_DSN", ""), new_cfg)
-    # `saved_db: false` only means "something is broken" when the database was
-    # reachable *before* this save. On the setup screen there is nothing to write
-    # to yet -- the JSON copy is the whole truth until the wizard has a working
-    # DSN -- and reporting a failure there put "save failed" on the very first
-    # screen a new user sees, for typing into a form that cannot be saved yet.
-    # Distinguish the two states so the UI can stay quiet about the expected one.
-    db_pending = (not ok_db) and (not bool(meta.get("db_connected")))
+    # `saved_db: false` only means "something is broken" when there was already a
+    # database to write to. On the setup screen there is nothing yet -- the JSON
+    # copy is the whole truth until the wizard has a working DSN -- and reporting
+    # a failure there put "save failed" on the very first screen a new user sees,
+    # for typing into a form that cannot be saved yet.
+    #
+    # What it must *not* swallow is an installation that was configured and whose
+    # database is now unreachable. The resolved DSN cannot distinguish those
+    # states because defaults are enough for `_build_dsn` to synthesize a non-empty
+    # URL on a fresh install. The durable JSON copy can: capture whether it existed
+    # before this request writes it, then surface failures on every later save.
+    db_pending = _db_write_pending(ok_db, had_saved_config)
     try:
         siglip_worker_enabled = _as_bool(new_cfg.get("SIGLIP_WORKER_ENABLED"), True)
         if siglip_worker_enabled:

@@ -181,12 +181,26 @@ export const useDashboardStore = defineStore("dashboard", () => {
   // first deserves an offer to upload, and the difference is invisible from
   // `filteredHomeItems` alone because the category/tag filters are applied by the
   // server, not in that computed.
+  //
+  // Three ways to get this wrong, each of which claims "your library is empty"
+  // about a library that is not:
+  //   * reading `homeFilters.categories` raw. "All categories selected" is the
+  //     normal state, and `effectiveFilterCategories()` deliberately reports that
+  //     as no filter ([]) while a raw count sees several -- so the offer could
+  //     never appear at all. Deselecting every category is the mirror case: `[]`
+  //     raw, but a real filter (`["__none__"]`). Ask the helper, not the array.
+  //   * ignoring an applied search. A search writes its results into `homeLocal`
+  //     (through `activeSearchTargetState()`), so "no matches" is otherwise
+  //     indistinguishable from "no galleries".
+  //   * ignoring folder mode. An empty *nested* folder is not an empty library;
+  //     the root listing is the whole library, so only that one still counts.
   const libraryEmptyWithoutFilters = computed(() => {
     if (!isLocalGalleryTab()) return false;
+    if (String((lastSearchContext.value || {}).mode || "").trim()) return false;
+    if (isLocalFolderMode() && String(localFolderPath.value || "").trim()) return false;
+    if (effectiveFilterCategories().length > 0) return false;
     const f = homeFilters.value || {};
-    const anyFilter =
-      (f.categories || []).length > 0 || (f.tags || []).length > 0 || Number(f.minRating || 0) > 0;
-    if (anyFilter) return false;
+    if ((f.tags || []).length > 0 || Number(f.minRating || 0) > 0) return false;
     const state = homeLocal.value || {};
     if (state.loading || state.error) return false;
     return !(state.items || []).length;

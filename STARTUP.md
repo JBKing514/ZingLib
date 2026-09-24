@@ -50,6 +50,13 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 > 首次启动时 `docker logs zinglib` 里会有 `WARN db-init skipped: POSTGRES_DSN is empty` —— **这是正常的**：
 > 还没有连接信息时不可能迁移，应用仍然会起来让你走向导；向导保存连接后**应用会自己建表与跑迁移**，不需要重启容器。
 
+> ⚠️ **从 v1.0.0 升级时注意库名**：v1.0.0 的默认库名是 `lrr_library`、数据库容器名是 `pgvector-db`；这里统一成了
+> `zinglib_library` 与 `zinglib-db`。**容器名没有影响** —— compose 保留了 `pgvector-db` 作为网络别名，两个名字都能解析。
+> **库名有影响**：PostgreSQL 只在数据目录为空时才使用 `POSTGRES_DB`，**复用的旧 volume 里仍然是 `lrr_library`**，
+> 而应用会先去连 `zinglib_library`。所以复用旧 volume 升级时，在 `.env` 里显式写上 `POSTGRES_DB=lrr_library`
+> （或者进库执行 `ALTER DATABASE lrr_library RENAME TO zinglib_library;` —— 有活动连接时改不动，先停掉应用容器），
+> 再 `docker compose -f Docker/quick_deploy_docker-compose.yml up -d`。**全新安装不受影响。**
+
 ### 1.2 手动单独拉起（自己给 docker 命令）
 
 想自己控制每一步、或者复用你已有的 PostgreSQL 时走这条。要点：**两个容器必须在同一个自建网络里**，

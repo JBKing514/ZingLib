@@ -8,6 +8,16 @@ services:
   pg17:
     image: pgvector/pgvector:pg17
     container_name: zinglib-db
+    # `pgvector-db` is the container name v1.0.0 shipped, and the Setup Wizard
+    # told users to type it. Anyone who has upgraded kept it in the saved config,
+    # which is resolved with higher precedence than these environment defaults --
+    # so without this alias the application rebuilds its DSN against a hostname
+    # that no longer resolves and cannot connect at all. Keep both names working;
+    # the alias costs nothing and removes the whole class of upgrade breakage.
+    networks:
+      default:
+        aliases:
+          - pgvector-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}   # <-- 数据库用户名，默认为 postgres/Default username for the database, default is postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres} # <-- 数据库密码，默认为 postgres/Default password for the database, default is postgres

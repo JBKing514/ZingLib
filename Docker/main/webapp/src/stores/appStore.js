@@ -146,7 +146,12 @@ export const useAppStore = defineStore("app", () => {
       accountForm.value.username = String(authUser.value.username || "");
       toast.success(_t("auth.profile.updated"));
     } catch (e) {
-      toast.warning(String(e?.response?.data?.detail || e));
+      // Account actions answer with a structured credential error for the cases
+      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
+      // too-short password). `String(detail)` would render "[object Object]"
+      // instead of the localised hint, so route these through the same helper the
+      // login and setup paths use.
+      toast.warning(apiErrorMessage(e, t));
     }
   }
 
@@ -168,7 +173,12 @@ export const useAppStore = defineStore("app", () => {
       accountForm.value.newPassword2 = "";
       await logoutNow();
     } catch (e) {
-      toast.warning(String(e?.response?.data?.detail || e));
+      // Account actions answer with a structured credential error for the cases
+      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
+      // too-short password). `String(detail)` would render "[object Object]"
+      // instead of the localised hint, so route these through the same helper the
+      // login and setup paths use.
+      toast.warning(apiErrorMessage(e, t));
     }
   }
 
@@ -180,7 +190,12 @@ export const useAppStore = defineStore("app", () => {
       toast.success(_t("auth.profile.deleted"));
       await logoutNow();
     } catch (e) {
-      toast.warning(String(e?.response?.data?.detail || e));
+      // Account actions answer with a structured credential error for the cases
+      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
+      // too-short password). `String(detail)` would render "[object Object]"
+      // instead of the localised hint, so route these through the same helper the
+      // login and setup paths use.
+      toast.warning(apiErrorMessage(e, t));
     }
   }
 

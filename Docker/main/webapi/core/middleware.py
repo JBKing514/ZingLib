@@ -39,6 +39,7 @@ RECOVERY_ALLOWED_ENDPOINTS = {
 # touching the library, the global config and the process, not about a user
 # renaming themselves or changing their own password.
 SELF_SERVICE_PATHS = {
+    "/api/auth/account",
     "/api/auth/logout",
     "/api/auth/password",
     "/api/auth/profile",

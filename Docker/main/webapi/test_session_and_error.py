@@ -293,9 +293,17 @@ def test_mutating_routes_require_admin_role():
         print(f"plain GET health/db -> {r.status_code}")
         assert r.status_code == 200, f"a plain session must still be able to read: {r.status_code}"
 
-        # 5) Self-service stays open: renaming yourself or changing your own
-        #    password is not an administrator action. Logout is used because it is
-        #    the one of the four that needs no other fixture, and it is asserted
+        # 5) Account deletion is self-service too. The fixture deliberately has
+        #    no valid password hash, so the handler should reject the credential;
+        #    reaching that 400 proves the middleware did not reject the role first.
+        r = plain.request("DELETE", "/api/auth/account", json={"password": "wrong"}, headers=plain_headers)
+        print(f"plain DELETE auth/account -> {r.status_code}")
+        assert r.status_code == 400, (
+            f"account deletion must reach its self-service handler, got {r.status_code}: {r.text[:200]}"
+        )
+
+        # 6) Self-service stays open: renaming yourself or changing your own
+        #    password is not an administrator action. Logout is asserted
         #    last because it revokes this client's session.
         r = plain.post("/api/auth/logout", headers=plain_headers)
         print(f"plain POST auth/logout -> {r.status_code}")

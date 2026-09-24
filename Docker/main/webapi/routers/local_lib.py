@@ -1175,8 +1175,24 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
     interchange format (Komga/LANraragi understand it too), and
     `.zinglib_meta/<arcid>_zinglib_metadata.json` is ZingLib's own backup.
 
-    ``dry_run`` reports what would be touched without writing. Archives are
-    handled by `write_comicinfo` (it rewrites the member in place, not the file).
+    The title written is the one the UI shows -- ``raw.user_meta.title`` when the
+    user renamed the gallery, falling back to ``works.title``. ComicInfo is where
+    a renamed gallery would otherwise be stamped back with its stale official
+    title, which is the opposite of what this route is for.
+
+    ``dry_run`` reports what would be touched without writing, and runs the *same*
+    eligibility checks the write path enforces, so the dialog cannot promise
+    writes the confirmed run then skips. ComicInfo and sidecar eligibility are
+    independent: a gallery without a visual vector can still receive ComicInfo,
+    while a missing gallery path does not prevent an existing database vector
+    from being backed up. Archives are handled by `write_comicinfo` (it rewrites
+    the member in place, not the file).
+
+    The sidecar step queries once per gallery on purpose. A sidecar carries that
+    gallery's own vectors, so fetching every gallery's vectors in one statement
+    would pull megabytes of vector text into memory to do exactly the same disk
+    work and fail in the same places. The route is administrator-only and only
+    runs when a user asks for it from Settings.
 
     The tag re-apply guard mirrors the one on the restore: that job rewrites
     ``works.tags`` for the whole library in chunks, and this route copies
@@ -1191,7 +1207,17 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
     want_sidecar = bool(req.get("sidecar", True))
     wanted = [str(x).strip() for x in (req.get("arcids") or []) if str(x).strip()]
 
-    sql = "SELECT arcid, title, tags, local_dir FROM works WHERE source = 'local'"
+    # `raw` is selected because the title the UI shows is
+    # `raw.user_meta.title || works.title`: selecting `title` alone would stamp
+    # the stale official title over every gallery the user renamed.
+    # `has_cover` mirrors `write_sidecar`'s own refusal to back up a gallery with
+    # no visual vector -- there is nothing expensive to protect yet -- so the
+    # preview can report that skip instead of the confirmed run failing on it.
+    sql = (
+        "SELECT arcid, title, tags, local_dir, raw, "
+        "(visual_embedding IS NOT NULL) AS has_cover "
+        "FROM works WHERE source = 'local'"
+    )
     params: tuple[Any, ...] = ()
     if wanted:
         sql += " AND arcid = ANY(%s::text[])"
@@ -1199,7 +1225,7 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
     rows = query_rows(sql + " ORDER BY arcid", params)
 
     from ..services.gallery_metadata_backup import write_sidecar
-    from ..services.local_lib_service import write_comicinfo
+    from ..services.local_lib_service import comicinfo_target_exists, write_comicinfo
 
     total = len(rows)
     sidecar_written = 0
@@ -1209,44 +1235,83 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
     details: list[dict[str, Any]] = []
     detail_cap = 200
 
+    def _display_title(row: dict[str, Any]) -> str:
+        """`raw.user_meta.title || works.title` -- the rule the API returns."""
+        raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+        user_meta = raw.get("user_meta") if isinstance(raw.get("user_meta"), dict) else {}
+        return str(user_meta.get("title") or "").strip() or str(row.get("title") or "").strip()
+
     for row in rows:
         arcid = str(row.get("arcid") or "").strip()
         local_dir = str(row.get("local_dir") or "").strip().replace("\\", "/").strip("/")
+        title_txt = _display_title(row)
+        tags = [str(x or "").strip() for x in (row.get("tags") or []) if str(x or "").strip()]
         row_note: dict[str, Any] = {"arcid": arcid, "local_dir": local_dir}
-        if not arcid or not local_dir:
-            # A row with no path cannot be written anywhere; say so instead of
-            # counting it as a failure.
+        comicinfo_reason = ""
+        sidecar_reason = ""
+        comicinfo_eligible = bool(want_comicinfo and local_dir and comicinfo_target_exists(local_dir))
+        sidecar_eligible = bool(want_sidecar and arcid and row.get("has_cover"))
+        if want_comicinfo and not comicinfo_eligible:
+            comicinfo_reason = "no local_dir" if not local_dir else "path not found"
+        if want_sidecar and not sidecar_eligible:
+            sidecar_reason = "no arcid" if not arcid else "no visual embedding"
+
+        # A row is skipped only when none of its requested outputs can be written.
+        # One unavailable output must never suppress the other one.
+        if not (comicinfo_eligible or sidecar_eligible):
             skipped += 1
-            row_note.update({"ok": False, "reason": "no local_dir"})
+            reasons = [x for x in (comicinfo_reason, sidecar_reason) if x]
+            row_note.update(
+                {
+                    "ok": False,
+                    "reason": "; ".join(reasons) or "no output requested",
+                    "comicinfo": False,
+                    "sidecar": False,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_reason": sidecar_reason,
+                }
+            )
         elif dry_run:
             row_note.update(
                 {
                     "ok": True,
                     "dry_run": True,
-                    "title": str(row.get("title") or "").strip(),
-                    "tags": len(row.get("tags") or []),
+                    "title": title_txt,
+                    "tags": len(tags),
+                    "comicinfo": comicinfo_eligible,
+                    "sidecar": sidecar_eligible,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_reason": sidecar_reason,
                 }
             )
         else:
-            ok_ci = True
-            ok_sc = True
-            if want_comicinfo:
+            ok_ci: bool | None = None
+            ok_sc: bool | None = None
+            if comicinfo_eligible:
                 try:
-                    ok_ci = bool(
-                        write_comicinfo(local_dir, str(row.get("title") or "").strip(), list(row.get("tags") or []))
-                    )
+                    ok_ci = bool(write_comicinfo(local_dir, title_txt, tags))
                 except Exception:
                     ok_ci = False
-            if want_sidecar:
+            if sidecar_eligible:
                 try:
                     ok_sc = bool(write_sidecar(arcid))
                 except Exception:
                     ok_sc = False
-            sidecar_written += 1 if (want_sidecar and ok_sc) else 0
-            comicinfo_written += 1 if (want_comicinfo and ok_ci) else 0
-            if not (ok_ci and ok_sc):
+            sidecar_written += 1 if ok_sc is True else 0
+            comicinfo_written += 1 if ok_ci is True else 0
+            attempted_results = [x for x in (ok_ci, ok_sc) if x is not None]
+            row_ok = bool(attempted_results) and all(attempted_results)
+            if not row_ok:
                 failed += 1
-            row_note.update({"ok": bool(ok_ci and ok_sc), "comicinfo": ok_ci, "sidecar": ok_sc})
+            row_note.update(
+                {
+                    "ok": row_ok,
+                    "comicinfo": ok_ci,
+                    "sidecar": ok_sc,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_reason": sidecar_reason,
+                }
+            )
         if len(details) < detail_cap:
             details.append(row_note)
 

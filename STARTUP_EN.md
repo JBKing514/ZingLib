@@ -56,6 +56,16 @@ All backend APIs, scheduled tasks and the WebUI are unified inside the applicati
 > wizard. Once the wizard saves the connection the application creates the schema and applies migrations itself;
 > no container restart is needed.
 
+> ⚠️ **Upgrading from v1.0.0? Watch the database name.** v1.0.0 defaulted to the database `lrr_library` and the
+> database container `pgvector-db`; both are now `zinglib_library` and `zinglib-db`. **The container name is
+> harmless** -- the compose file keeps `pgvector-db` as a network alias, so both names resolve. **The database name
+> is not**: PostgreSQL only uses `POSTGRES_DB` when the data directory is empty, so **a reused volume still holds
+> `lrr_library`** while the application now tries `zinglib_library` first. If you are reusing the old volume, set
+> `POSTGRES_DB=lrr_library` explicitly in `.env` (or run
+> `ALTER DATABASE lrr_library RENAME TO zinglib_library;` inside the container -- stop the application container
+> first, it cannot rename a database with active connections), then
+> `docker compose -f Docker/quick_deploy_docker-compose.yml up -d`. **Fresh installs are unaffected.**
+
 ### 1.2 Manual containers (your own `docker` commands)
 
 For when you want to control each step, or reuse a PostgreSQL you already run. The essential point: **the two

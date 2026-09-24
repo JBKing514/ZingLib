@@ -49,6 +49,11 @@ All backend APIs, scheduled tasks and the WebUI are unified inside the applicati
 > (service name) resolve.
 > ⚠️ The database name must be **`zinglib_library`** -- the built-in default inside the application code is
 > `lrr_library`, so do not just accept the prefilled value.
+>
+> On first start `docker logs zinglib` shows `WARN db-init skipped: POSTGRES_DSN is empty` -- **that is expected**:
+> with no connection details there is nothing to migrate, and the application still starts so you can reach the
+> wizard. Once the wizard saves the connection the application creates the schema and applies migrations itself;
+> no container restart is needed.
 
 ### 1.2 Manual containers (your own `docker` commands)
 

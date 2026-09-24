@@ -45,6 +45,9 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 > **Setup Wizard 里数据库那一栏填**：主机 `zinglib-db`、端口 `5432`、用户 `postgres`、密码 `postgres`、数据库 `zinglib_library`。
 > 应用与数据库在同一个 compose 网络里，`zinglib-db`（容器名）与 `pg17`（服务名）都能解析。
 > ⚠️ 数据库名要填 **`zinglib_library`** —— 应用代码里的内置默认库名是 `lrr_library`，别照抄预填值。
+>
+> 首次启动时 `docker logs zinglib` 里会有 `WARN db-init skipped: POSTGRES_DSN is empty` —— **这是正常的**：
+> 还没有连接信息时不可能迁移，应用仍然会起来让你走向导；向导保存连接后**应用会自己建表与跑迁移**，不需要重启容器。
 
 ### 1.2 手动单独拉起（自己给 docker 命令）
 

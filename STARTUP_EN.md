@@ -13,36 +13,60 @@ ZingLib is a **local-first** private manga / illustration library application: i
 
 ## 1. Basic Steps
 
-1. **Clone the Project**
-   ```bash
-   git clone <your-repository-url>
-   cd <repository-folder>
-   ```
+The image is public on Docker Hub (`jbking114514/zinglib`) and ships both `linux/amd64` and `linux/arm64` (a NAS, a Raspberry Pi or a Mac all work).
+**Pulling the image is the recommended path**; building from source is 1.3, and only needed if you intend to change the code, want your own image, or need an architecture the published image does not cover.
 
-2. **Build and Run (recommended: reproducible from source)**
-   ```bash
-   cd Docker/main
-   docker build -t zinglib:local .
-   docker run -d --name zinglib \
-     -p 8501:8501 \
-     -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-     -v /path/to/runtime:/app/runtime \
-     zinglib:local data-ui
-   ```
+### 1.1 Pull and run (recommended)
 
-   Alternatively use the compose template:
-   ```bash
-   docker compose -f Docker/quick_deploy_docker-compose.yml up -d
-   ```
+No clone required:
 
-   That template spins up two services: `pg17` (PostgreSQL + pgvector) and `data-ui` (the application).
-   Note that `image: {ACTUAL_IMAGE}` in the template is a **placeholder** you must replace with your own built or pulled image. Data lands in `./zinglib/` by default; override with `POSTGRES_DATA_DIR` and `YOUR_LOCAL_PATH`.
+```bash
+docker run -d --name zinglib \
+  -p 8501:8501 \
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
+  -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
 
-   All backend APIs, scheduled tasks, and the WebUI are unified inside the application container.
+* `<db-host>` is whatever runs PostgreSQL (use `host.docker.internal` for the same machine on Docker Desktop).
+* Replace `latest` with a pinned version `1.0.0` if you prefer; `1.0`, `1` and `sha-<commit>` are published too.
+* `/path/to/runtime` is the host data directory: model weights, the local library, thumbnails, the per-gallery `.zinglib_meta/` backups and the migration log all live there. **Back it up.**
 
-3. **Access the WebUI**
-   * Open `http://<host>:8501` in your browser.
-   * **On first entry the system guides you into the Setup Wizard**: complete the database connection and create the first admin account in the web interface. **No manual `.env` editing is required.**
+### 1.2 Bring up the compose template (application + database)
+
+```bash
+git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
+docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+That template starts two services: `pg17` (PostgreSQL + pgvector) and `data-ui` (the application). `data-ui` uses the
+public image above by default and can be repointed with `ZINGLIB_IMAGE`; data lands in **`Docker/zinglib/`, beside the
+compose file** (relative paths inside a compose file resolve against that file, not against your current directory).
+Override `POSTGRES_DATA_DIR` (database) and `YOUR_LOCAL_PATH` (application runtime) -- point both at `zinglib/` in the
+repository root if you would rather keep the data there.
+
+All backend APIs, scheduled tasks and the WebUI are unified inside the application container.
+
+### 1.3 Build from source (fallback)
+
+```bash
+cd Docker/main
+docker build -t zinglib:local .
+docker run -d --name zinglib \
+  -p 8501:8501 \
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
+  -v /path/to/runtime:/app/runtime \
+  zinglib:local data-ui
+```
+
+Reasons to build it yourself: you are changing the code, you want different base images or dependency versions, or you
+need a CPU architecture the published image does not cover. A local build feeds the 1.2 template with
+`ZINGLIB_IMAGE=zinglib:local`.
+
+### 1.4 Access the WebUI
+
+* Open `http://<host>:8501` in your browser.
+* **On first entry the system guides you into the Setup Wizard**: complete the database connection and create the first admin account in the web interface. **No manual `.env` editing is required.**
 
 ## 2. Manual Step-by-Step Deployment (Optional)
 
@@ -55,8 +79,13 @@ For scenarios where you want to bring containers up individually or deploy acros
 
 2. ZingLib (core service)
    ```bash
-   docker compose -f Docker/main_docker-compose.yml up -d
+   POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/lrr_library?sslmode=disable' \
+     docker compose -f Docker/main_docker-compose.yml up -d
    ```
+
+   * 🔴 **`POSTGRES_DSN` must point at the database from step 1** (use `host.docker.internal` for the same machine on Docker Desktop). The template's default is a **placeholder containing `<db-host>`**, so without this override the app cannot reach its database.
+   * The image defaults to the published one; add `ZINGLIB_IMAGE=zinglib:local` for your own build.
+   * The runtime directory lands in `Docker/zinglib/runtime/` beside the compose file; override with `YOUR_LOCAL_PATH`.
 
 ## 3. First Initialization and Library Ingestion
 
@@ -125,7 +154,45 @@ no_proxy=localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12 # keep LAN 
 
 ## 8. Development & Verification
 
-The project's **only** development and integration-test environment is a dedicated Linux host (Ubuntu):
+### 8.1 What a fresh clone can run
+
+Everything below is **in this repository** and needs neither a container nor any dedicated host:
+
+```bash
+# Release-engineering guards (migrations / version single source / pinned deps)
+python scripts/check_migrations.py
+python scripts/check_version_consistency.py
+python scripts/check_deps_pinned.py
+
+# Backend unit tests -- run as modules (a script run cannot import webapi), cwd = Docker/main
+cd Docker/main && python -m webapi.test_local_only_contract
+# ... plus every test_*.py under webapi/; that directory is the authoritative list
+
+# Frontend build + the node-side contract tests
+cd Docker/main/webapp && npm ci && npm run build && node --test test_*.mjs
+```
+
+⚠️ The repository's `.gitignore` deliberately excludes `/tools/` and `AGENTS.md`: the workspace-level guard scripts,
+mutation tests, container probes and deploy scripts **do not ship in a clone**. So the answer to "which guards does this
+repository have" is **the three under `scripts/` above** -- do not present scripts that are not in the repository as the
+project's guards.
+
+### 8.2 What CI runs
+
+`.github/workflows/ci.yml` runs three jobs on every push / PR, mirroring the three commands in 8.1:
+
+| job | what it does |
+| --- | --- |
+| `release-guards` | the three guards under `scripts/` |
+| `frontend` | `npm ci` → `npm run build` → `node --test test_*.mjs` |
+| `backend` | starts a pgvector PostgreSQL, installs dependencies and the built frontend bundle **the way the image does**, and runs **every** `webapi/test_*.py` module (through the same migration entry point `entrypoint.sh` calls) |
+
+Only after all three pass does CI publish the multi-architecture image to Docker Hub on a `v*` tag -- and it requires the
+tag to match the application version exactly, so a mistyped tag is never published.
+
+### 8.3 This project's deployment verification environment
+
+The project's **only** deployment and integration-test environment is a dedicated Linux host (Ubuntu):
 
 ```bash
 ssh <user>@<dev-host>
@@ -133,19 +200,7 @@ ssh <user>@<dev-host>
 
 * Run image builds, container deployment, and integration regressions on that host. **Do not** use the development Windows Docker Desktop.
 * Inspect remote containers, ports, and mounts before changing anything; keep test data isolated.
-
-Contract tests:
-
-```bash
-# Backend
-cd Docker/main/webapi
-python test_local_only_contract.py
-python -m webapi.test_xp_local
-
-# Frontend
-cd Docker/main/webapp
-npm run build
-```
+* 🔴 **A successful build, a live process or an empty log is not a regression pass**: report build, unit tests, runtime/API checks and visual checks **separately**.
 
 ## 9. Troubleshooting
 

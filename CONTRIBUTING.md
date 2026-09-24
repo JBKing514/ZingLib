@@ -38,6 +38,7 @@
    python -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
+   pip install -r requirements-dev.txt   # 想跑测试才需要（httpx2 仅供 TestClient）
    uvicorn webapi.main:app --reload --port 8501
    ```
 3. **前端 (Vue 3)**：
@@ -48,7 +49,7 @@
    ```
    需要在 `vite.config.js` 里把 `/api` 代理到本地的 FastAPI 端口，保持同源。
 
-> 完整的开发环境说明、测试怎么跑、以及提交前该过哪些检查，见 [**AGENTS.md**](AGENTS.md)。
+> 完整的开发环境说明、一个干净 clone 能跑什么、CI 跑什么，见 [**STARTUP.md**](STARTUP.md) 第 8 节「开发与验证」。
 
 ---
 

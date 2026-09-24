@@ -48,6 +48,7 @@ Frontend and backend share one origin (the built frontend is served by FastAPI),
    python -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
+   pip install -r requirements-dev.txt   # only needed to run the tests (httpx2, for TestClient)
    uvicorn webapi.main:app --reload --port 8501
    ```
 3. **Frontend (Vue 3)**:
@@ -58,8 +59,8 @@ Frontend and backend share one origin (the built frontend is served by FastAPI),
    ```
    Configure a proxy in `vite.config.js` to forward `/api` to your local FastAPI port, keeping things same-origin.
 
-> The full development notes, how to run the tests, and what to check before committing live in
-> [**AGENTS.md**](AGENTS.md).
+> The full development notes, what a fresh clone can run, and what CI runs live in
+> [**STARTUP_EN.md**](STARTUP_EN.md), section 8 ("Development & Verification").
 
 ---
 

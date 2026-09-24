@@ -1,3 +1,9 @@
+# ZingLib -- recommended deployment: the application and its pgvector database.
+#
+# The image is public, so this file works with no build step:
+#   docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+#
+# Point it at your own build with:  ZINGLIB_IMAGE=zinglib:local
 services:
   pg17:
     image: pgvector/pgvector:pg17
@@ -18,7 +24,9 @@ services:
       retries: 12
 
   data-ui:
-    image: {ACTUAL_IMAGE} # <-- 请替换为实际的镜像名称和标签
+    # Published public image (linux/amd64 + linux/arm64). Nothing to build, nothing
+    # to substitute -- override ZINGLIB_IMAGE only if you want your own build.
+    image: ${ZINGLIB_IMAGE:-jbking114514/zinglib:latest}
     container_name: zinglib
     command: ["data-ui"]
 

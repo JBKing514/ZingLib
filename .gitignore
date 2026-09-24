@@ -65,6 +65,14 @@ Docker/n8n_data/
 Docker/local-files/
 Docker/autoehhunter/
 
+# Data directories the compose templates create next to themselves (and the
+# same layout at the repository root). These hold a live PostgreSQL cluster, the
+# application config and -- most importantly -- the user's own library; none of
+# it may ever be committed. `Docker/**/runtime/` above covers the runtime half,
+# but the pgvector cluster directory matched nothing before.
+/zinglib/
+/Docker/zinglib/
+
 # Downloaded models and binary caches
 *.bin
 *.safetensors

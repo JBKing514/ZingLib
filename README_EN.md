@@ -40,7 +40,32 @@ Prefer local models over cloud APIs -- this is your own library.
 
 ### Quick start
 
-**Option 1 -- build from source (recommended)**
+**Option 1 -- pull the published image (recommended)**
+
+The image is public on Docker Hub and ships both `linux/amd64` and `linux/arm64` (so a NAS, a Raspberry Pi or a Mac all work). No clone, no local build:
+
+```bash
+docker run -d --name zinglib \
+  -p 8501:8501 \
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
+  -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
+
+Pin a version by replacing `latest` with `1.0.0` (`1.0`, `1` and `sha-<commit>` are published too).
+
+**Option 2 -- `Docker/quick_deploy_docker-compose.yml`** (application + pgvector in one file, also pulling the image)
+
+```bash
+git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
+docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+Data lands in **`Docker/zinglib/`, beside the compose file** (relative paths inside a compose file resolve against that file, not against your current directory); override with `POSTGRES_DATA_DIR` and `YOUR_LOCAL_PATH`. Set `ZINGLIB_IMAGE` to point at a different image (your own build, for instance).
+
+**Option 3 -- build from source (fallback)**
+
+For when you want to change the code, or need an architecture the published image does not cover:
 
 ```bash
 cd Docker/main
@@ -52,11 +77,7 @@ docker run -d --name zinglib \
   zinglib:local data-ui
 ```
 
-Open `http://<your-ip>:8501` and follow the **Setup Wizard** to configure the database and create the first admin account. No `.env` editing.
-
-**Option 2 -- use `Docker/quick_deploy_docker-compose.yml`** (application + pgvector)
-
-`image: {ACTUAL_IMAGE}` there is a placeholder you must replace with your own built or pulled image. Data lands in `./zinglib/` by default; override with `POSTGRES_DATA_DIR` and `YOUR_LOCAL_PATH`.
+All three end the same way: open `http://<your-ip>:8501` and follow the **Setup Wizard** to configure the database and create the first admin account. No `.env` editing.
 
 > Deployment details, directory layout, proxy settings -> [**STARTUP_EN.md**](STARTUP_EN.md)
 > New machine, relocated library, or a rebuilt database -- how to get back the hours of embeddings and your reading history -> [**BACKUP_EN.md**](BACKUP_EN.md)
@@ -72,7 +93,7 @@ This project is the result of me thinking about what is wrong with the readers I
 A spare-time hobby project. There is no promise of updates. Issues and PRs are welcome, but I am not a professional developer and may not get to them.
 
 Stack: Vue 3 / Pinia / Vuetify / Vite · FastAPI / Psycopg 3 · PostgreSQL + pgvector · PyTorch / Transformers (SigLIP) · SciPy / Scikit-learn.
-Development environment and how to run the tests -> [**AGENTS.md**](AGENTS.md).
+Want to change the code or run the tests? The local development environment and "what a fresh clone can run" both live in [**STARTUP_EN.md**](STARTUP_EN.md), under *Development and verification*; this README is only about getting it running.
 
 ## Credits
 

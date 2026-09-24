@@ -13,36 +13,57 @@ ZingLib 是一个**本地优先**的私人漫画 / 插画库管理应用：它�
 
 ## 1. 基础步骤
 
-1. **克隆项目**
-   ```bash
-   git clone <你的仓库地址>
-   cd <仓库目录>
-   ```
+镜像已公开在 Docker Hub（`jbking114514/zinglib`），同时提供 `linux/amd64` 与 `linux/arm64`（NAS / 树莓派 / Mac 都能直接用）。
+**推荐直接拉镜像**；从源码构建见 1.3，只在你打算改代码、要自建镜像或需要镜像未覆盖的架构时才走那条。
 
-2. **构建并启动（推荐：从源码构建，可复现）**
-   ```bash
-   cd Docker/main
-   docker build -t zinglib:local .
-   docker run -d --name zinglib \
-     -p 8501:8501 \
-     -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-     -v /path/to/runtime:/app/runtime \
-     zinglib:local data-ui
-   ```
+### 1.1 拉取并启动（推荐）
 
-   也可以使用编排模板：
-   ```bash
-   docker compose -f Docker/quick_deploy_docker-compose.yml up -d
-   ```
+不需要克隆仓库：
 
-   该模板会拉起两个服务：`pg17`（PostgreSQL + pgvector）与 `data-ui`（应用本体）。
-   注意模板里的 `image: {ACTUAL_IMAGE}` 是**占位符**，需要替换为你自己构建或拉取的镜像名；数据目录默认落在 `./zinglib/`，可用 `POSTGRES_DATA_DIR` 与 `YOUR_LOCAL_PATH` 覆盖。
+```bash
+docker run -d --name zinglib \
+  -p 8501:8501 \
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
+  -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
 
-   所有后端 API、定时任务与 WebUI 都已经统一收束进应用容器中。
+* `<db-host>` 是运行 PostgreSQL 的地址（同机 Docker Desktop 用 `host.docker.internal`）。
+* `latest` 可换成固定版本 `1.0.0`，另有 `1.0` / `1` / `sha-<commit>`。
+* `/path/to/runtime` 是宿主机数据目录：模型权重、本地库、缩略图、每画廊备份 `.zinglib_meta/` 与迁移日志都在这里，**记得备份**。
 
-3. **访问 WebUI**
-   * 浏览器打开 `http://<host>:8501`。
-   * **首次进入时，系统将引导您进入 Setup Wizard（初始化向导）**：在 Web 界面中完成数据库连接、建立首个管理员账号即可，**无需手动修改任何 `.env` 文件**。
+### 1.2 用编排模板拉起（应用 + 数据库）
+
+```bash
+git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
+docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+该模板拉起两个服务：`pg17`（PostgreSQL + pgvector）与 `data-ui`（应用本体）。`data-ui` 默认就用上面那个公开镜像，
+可用环境变量 `ZINGLIB_IMAGE` 覆盖；数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径相对 compose 文件解析，不是相对当前目录），
+可用 `POSTGRES_DATA_DIR`（数据库）与 `YOUR_LOCAL_PATH`（应用 runtime）覆盖 —— 想把它们挪到仓库根目录的 `zinglib/`，把这两个变量指过去即可。
+
+所有后端 API、定时任务与 WebUI 都已经统一收束进应用容器中。
+
+### 1.3 从源码构建（备选）
+
+```bash
+cd Docker/main
+docker build -t zinglib:local .
+docker run -d --name zinglib \
+  -p 8501:8501 \
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
+  -v /path/to/runtime:/app/runtime \
+  zinglib:local data-ui
+```
+
+需要自己构建的典型情形：要改代码、要换基础镜像或依赖版本、或需要公开镜像未覆盖的 CPU 架构。
+构建出的镜像同样可以用 `ZINGLIB_IMAGE=zinglib:local` 喂给 1.2 的编排模板。
+
+### 1.4 访问 WebUI
+
+* 浏览器打开 `http://<host>:8501`。
+* **首次进入时，系统将引导您进入 Setup Wizard（初始化向导）**：在 Web 界面中完成数据库连接、建立首个管理员账号即可，**无需手动修改任何 `.env` 文件**。
 
 ## 2. 手动分步部署（可选）
 
@@ -55,8 +76,13 @@ ZingLib 是一个**本地优先**的私人漫画 / 插画库管理应用：它�
 
 2. ZingLib（核心服务）
    ```bash
-   docker compose -f Docker/main_docker-compose.yml up -d
+   POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/lrr_library?sslmode=disable' \
+     docker compose -f Docker/main_docker-compose.yml up -d
    ```
+
+   * 🔴 **`POSTGRES_DSN` 必须指向第 1 步那个库**（同机 Docker Desktop 用 `host.docker.internal`）。模板里的默认值是带 `<db-host>` 的**占位串**，不覆盖就连不上数据库。
+   * 镜像默认用公开镜像；要用自己构建的，加 `ZINGLIB_IMAGE=zinglib:local`。
+   * runtime 默认落在 compose 文件同级的 `Docker/zinglib/runtime/`，可用 `YOUR_LOCAL_PATH` 覆盖。
 
 ## 3. 首次初始化与数据入库
 
@@ -120,7 +146,42 @@ no_proxy=localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12 # 局域网
 
 ## 8. 开发与验证
 
-本项目的**唯一**开发与集成测试环境是一台专用 Linux 主机（Ubuntu）：
+### 8.1 一个干净 clone 能跑什么
+
+下面这些**都在仓库里**，不需要容器、也不需要任何专用主机：
+
+```bash
+# 发布工程守卫（迁移集 / 版本唯一源 / 依赖与基础镜像锁定）
+python scripts/check_migrations.py
+python scripts/check_version_consistency.py
+python scripts/check_deps_pinned.py
+
+# 后端单元测试 —— 必须以模块方式跑（脚本方式 import 不到 webapi），cwd 在 Docker/main
+cd Docker/main && python -m webapi.test_local_only_contract
+# ……以及 webapi/ 下的全部 test_*.py，权威清单就是那个目录本身
+
+# 前端构建 + node 侧契约测试
+cd Docker/main/webapp && npm ci && npm run build && node --test test_*.mjs
+```
+
+⚠️ 仓库的 `.gitignore` 刻意排除了 `/tools/` 与 `AGENTS.md`：**工作区级的守卫脚本、变异测试、容器探针、部署脚本都不随 clone 分发**。
+所以"这个仓库有哪些守卫"的答案就是**上面 `scripts/` 里的三个**，别把不在仓库里的脚本说成项目的守卫。
+
+### 8.2 CI 跑什么
+
+`.github/workflows/ci.yml` 在每次 push / PR 上跑三个 job，和 8.1 的三条一一对应：
+
+| job | 内容 |
+| --- | --- |
+| `release-guards` | `scripts/` 下那三个守卫 |
+| `frontend` | `npm ci` → `npm run build` → `node --test test_*.mjs` |
+| `backend` | 起一个带 `pgvector` 的 PostgreSQL，按**镜像里的布局**装依赖与前端构建产物，跑**全部** `webapi/test_*.py` 模块（用的是 `entrypoint.sh` 同一个迁移入口） |
+
+三者全绿之后，CI 才在打 `v*` 标签时把多架构镜像发布到 Docker Hub —— 而且要求**标签与应用版本严格一致**，敲错版本号的标签不会被发布。
+
+### 8.3 本项目的部署验证环境
+
+本项目**唯一**的部署与集成回归环境是一台专用 Linux 主机（Ubuntu）：
 
 ```bash
 ssh <user>@<dev-host>
@@ -128,19 +189,7 @@ ssh <user>@<dev-host>
 
 * 在该主机上执行镜像构建、容器部署与集成回归；**不要**使用开发用的 Windows 桌面 Docker。
 * 改动前先查看远端容器、端口与挂载；测试数据保持隔离。
-
-契约测试：
-
-```bash
-# 后端
-cd Docker/main/webapi
-python test_local_only_contract.py
-python -m webapi.test_xp_local
-
-# 前端
-cd Docker/main/webapp
-npm run build
-```
+* 🔴 **构建成功、进程活着、日志为空都不等于回归通过**：构建、单元测试、运行时 API、视觉这四类结果要**分开**报告。
 
 ## 9. 故障排查
 

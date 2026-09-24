@@ -1,5 +1,11 @@
 # Docker Hub publishing
 
+The published image is **`jbking114514/zinglib`** -- public, and built for both
+`linux/amd64` and `linux/arm64`. `README.md` and `STARTUP.md` recommend pulling it;
+building from source is documented as the fallback. That gets them by default
+because `Docker/quick_deploy_docker-compose.yml` and `Docker/main_docker-compose.yml`
+both default to `${ZINGLIB_IMAGE:-jbking114514/zinglib:latest}`.
+
 The `ci` workflow tests every push and pull request. It publishes an image only
 after all release guards, frontend tests, and backend tests pass.
 

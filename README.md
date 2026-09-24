@@ -40,7 +40,32 @@
 
 ### 快速启动
 
-**方式一：从源码构建（推荐）**
+**方式一：直接拉取已发布的镜像（推荐）**
+
+镜像已公开在 Docker Hub，同时提供 `linux/amd64` 与 `linux/arm64`（NAS、树莓派、Mac 都能直接跑），**不需要克隆仓库、不需要本地构建**：
+
+```bash
+docker run -d --name zinglib \
+  -p 8501:8501 \
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
+  -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
+
+想固定版本就把 `latest` 换成 `1.0.0`（同样提供 `1.0` / `1` / `sha-<commit>`）。
+
+**方式二：用 `Docker/quick_deploy_docker-compose.yml` 一键拉起**（应用 + pgvector 双容器，同样是拉镜像）
+
+```bash
+git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
+docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径是相对 compose 文件解析的，不是相对当前目录），可用 `POSTGRES_DATA_DIR` 与 `YOUR_LOCAL_PATH` 覆盖；要换镜像（比如换成自己构建的）用 `ZINGLIB_IMAGE` 覆盖即可。
+
+**方式三：从源码构建（备选）**
+
+想自己改代码，或需要镜像没提供的架构时才走这条：
 
 ```bash
 cd Docker/main
@@ -52,11 +77,7 @@ docker run -d --name zinglib \
   zinglib:local data-ui
 ```
 
-打开 `http://<你的IP>:8501`，跟着 **Setup Wizard** 完成数据库连接与管理员账号创建即可，不需要手动改任何 `.env` 文件。
-
-**方式二：使用 `Docker/quick_deploy_docker-compose.yml`**（应用 + pgvector 双容器）
-
-其中的 `image: {ACTUAL_IMAGE}` 是占位符，需要替换成你自己构建或拉取的镜像名。数据目录默认在 `./zinglib/`，可用 `POSTGRES_DATA_DIR` 与 `YOUR_LOCAL_PATH` 覆盖。
+三种方式起来之后都一样：打开 `http://<你的IP>:8501`，跟着 **Setup Wizard** 完成数据库连接与管理员账号创建即可，不需要手动改任何 `.env` 文件。
 
 > 部署细节、目录结构、代理设置 → [**STARTUP.md**](STARTUP.md)
 > 换机器 / 库搬家 / 重建数据库后，怎么找回算了几小时的向量与阅读历史 → [**BACKUP.md**](BACKUP.md)
@@ -72,7 +93,7 @@ docker run -d --name zinglib \
 纯兴趣项目，不保证更新。欢迎提 Issue 和 PR，但本人纯外行，不一定会响应。
 
 技术栈：Vue 3 / Pinia / Vuetify / Vite · FastAPI / Psycopg 3 · PostgreSQL + pgvector · PyTorch / Transformers（SigLIP）· SciPy / Scikit-learn。
-开发环境、测试怎么跑 → [**AGENTS.md**](AGENTS.md)。
+想改代码、想跑测试：本地开发环境与「一个干净 clone 能跑什么」都在 [**STARTUP.md**](STARTUP.md) 的 **开发与验证** 一节；这份 README 只讲怎么把它跑起来。
 
 ## 致谢
 

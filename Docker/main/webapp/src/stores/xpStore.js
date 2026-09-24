@@ -1,6 +1,7 @@
 import { nextTick, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { getHomeTagSuggest, getXpMap } from "../api";
+import { renderFirstAvailable } from "../utils/xpRenderPlan";
 
 export const useXpStore = defineStore("xp", () => {
   const xpChartEl = ref(null);
@@ -8,6 +9,11 @@ export const useXpStore = defineStore("xp", () => {
 
   // 2D/3D toggle state — default to 3D (MAP potential surface)
   const xpChartMode = ref("3d");
+  // Per-figure failure state. Empty means "drew fine"; a message is shown next to
+  // the figure instead of leaving an unexplained blank box.
+  const xpChartError = ref("");
+  const dendroError = ref("");
+  const xpChartDegraded = ref(false);
 
   const xp = ref({
     mode: "read_history",
@@ -50,8 +56,11 @@ export const useXpStore = defineStore("xp", () => {
     return plotlyInstance;
   }
 
-  async function renderXpChart() {
-    if (!xpChartEl.value) return;
+  async function renderXpChart(options = {}) {
+    const useWebgl = options.useWebgl !== false;
+    if (!xpChartEl.value) {
+      throw new Error("XP chart container is not mounted");
+    }
     const Plotly = await ensurePlotly();
     const points = xpResult.value.points || [];
     const byCluster = new Map();
@@ -67,7 +76,11 @@ export const useXpStore = defineStore("xp", () => {
         y: arr.map((x) => x.y),
         text: arr.map((x) => `${x.title}<br>${x.arcid}`),
         mode: "markers",
-        type: "scattergl",
+        // `scattergl` is a WebGL trace. It is the default because the map can
+        // carry thousands of points, but it is also the reason a context without
+        // WebGL shows an empty box -- `renderXpChart({ useWebgl: false })` is the
+        // SVG fallback that still draws the same figure.
+        type: useWebgl ? "scattergl" : "scatter",
         name,
         hovertemplate: "%{text}<extra></extra>",
         marker: { size: 8, opacity: 0.85 },
@@ -89,7 +102,9 @@ export const useXpStore = defineStore("xp", () => {
   }
 
   async function renderXpChart3D() {
-    if (!xpChartEl.value) return;
+    if (!xpChartEl.value) {
+      throw new Error("XP chart container is not mounted");
+    }
     const Plotly = await ensurePlotly();
     const points = xpResult.value.points || [];
     const ps = xpResult.value.potential_surface;
@@ -161,11 +176,11 @@ export const useXpStore = defineStore("xp", () => {
     );
   }
 
-  async function renderActiveXpChart() {
+  async function renderActiveXpChart(options = {}) {
     if (xpChartMode.value === "3d") {
       await renderXpChart3D();
     } else {
-      await renderXpChart();
+      await renderXpChart(options);
     }
   }
 
@@ -173,11 +188,20 @@ export const useXpStore = defineStore("xp", () => {
     // xpChartMode is already updated by v-model before this is called,
     // so we just re-render in whichever mode is now active.
     await nextTick();
-    await renderActiveXpChart();
+    const chart = await renderFirstAvailable([
+      () => renderActiveXpChart(),
+      () => renderXpChart({ useWebgl: true }),
+      () => renderXpChart({ useWebgl: false }),
+    ]);
+    xpChartError.value = chart.ok ? "" : chart.error;
+    xpChartDegraded.value = chart.ok && chart.index > 0;
   }
 
   async function renderDendrogram() {
-    if (!dendroChartEl.value || !xpResult.value.dendrogram?.available) return;
+    if (!xpResult.value.dendrogram?.available) return;
+    if (!dendroChartEl.value) {
+      throw new Error("Dendrogram container is not mounted");
+    }
     const Plotly = await ensurePlotly();
     const fig = xpResult.value.dendrogram.figure;
     if (!fig?.data || !fig?.layout) return;
@@ -194,8 +218,21 @@ export const useXpStore = defineStore("xp", () => {
     };
     xpResult.value = await getXpMap(params);
     await nextTick();
-    await renderActiveXpChart();
-    await renderDendrogram();
+    // Each figure is attempted on its own and every attempt is cheaper than the
+    // last: the requested view, then the WebGL scatter, then the SVG scatter.
+    // None of these throws out of this function -- a figure that cannot be drawn
+    // must neither suppress the other figure nor disappear silently.
+    const chart = await renderFirstAvailable([
+      () => renderActiveXpChart(),
+      () => renderXpChart({ useWebgl: true }),
+      () => renderXpChart({ useWebgl: false }),
+    ]);
+    const dendro = await renderFirstAvailable([() => renderDendrogram()]);
+    xpChartError.value = chart.ok ? "" : chart.error;
+    // index > 0 means the figure is on screen but not in the requested form
+    // (the 3D landscape fell back to the flat scatter, or WebGL to SVG).
+    xpChartDegraded.value = chart.ok && chart.index > 0;
+    dendroError.value = dendro.ok ? "" : dendro.error;
   }
 
   async function loadXpExcludeTagSuggestions() {
@@ -292,6 +329,9 @@ export const useXpStore = defineStore("xp", () => {
     xp,
     xpTimeMode,
     xpChartMode,
+    xpChartError,
+    dendroError,
+    xpChartDegraded,
     xpResult,
     xpExcludeTags,
     newXpExcludeTag,

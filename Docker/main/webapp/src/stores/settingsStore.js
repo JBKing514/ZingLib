@@ -6,7 +6,6 @@ import {
   enableVisualTask,
   clearRuntimeDeps,
   clearSiglip,
-  clearThumbCache,
   clearWorksDuplicates,
   downloadAppConfigBackup,
   downloadSiglip,
@@ -17,7 +16,6 @@ import {
   getHomeTagSuggest,
   getProviderModels,
   getSiglipDownloadStatus,
-  getThumbCacheStats,
   getTranslationStatus,
   restoreAppConfigBackup,
   updateConfig,
@@ -49,7 +47,6 @@ export const useSettingsStore = defineStore("settings", () => {
   const llmModelOptions = ref([]);
   const ingestModelOptions = ref([]);
   const appConfigRestoreRef = ref(null);
-  const thumbCacheStats = ref({ files: 0, mb: 0, latest_at: "-" });
   const translationStatus = ref({ repo: "", head_sha: "", fetched_at: "-", manual_file: { path: "", exists: false, size: 0, updated_at: "-" } });
   const translationUploadRef = ref(null);
   const modelStatus = ref({
@@ -596,6 +593,16 @@ export const useSettingsStore = defineStore("settings", () => {
     _autoSaveInFlight = (async () => {
       try {
         const res = await updateConfig(payload);
+        // No database reachable yet (the setup screen, before the wizard has a
+        // working DSN): the JSON copy is the whole truth for now. Treating that
+        // as a failure put "save failed" in front of a brand-new user, on the
+        // first screen, for typing into a form that had nowhere to be stored.
+        if (res && res.db_pending) {
+          _markConfigSaved(dirty, desired);
+          configSaveState.value = "saved";
+          _scheduleConfigSaveIdle();
+          return true;
+        }
         if (res && res.saved_db === false) {
           configSaveState.value = "error";
           configSaveError.value = String(res.db_error || "n/a");
@@ -722,20 +729,6 @@ export const useSettingsStore = defineStore("settings", () => {
     } catch (e) {
       llmModelOptions.value = [];
       notify(String(e?.response?.data?.detail || e?.message || e), "warning");
-    }
-  }
-
-  async function loadThumbCacheStats() {
-    thumbCacheStats.value = await getThumbCacheStats();
-  }
-
-  async function clearThumbCacheAction() {
-    try {
-      const res = await clearThumbCache();
-      notify(t("settings.cache.cleared", { n: res.deleted || 0 }), "success");
-      await loadThumbCacheStats();
-    } catch (e) {
-      notify(String(e?.response?.data?.detail || e), "warning");
     }
   }
 
@@ -989,7 +982,6 @@ export const useSettingsStore = defineStore("settings", () => {
     llmModelOptions,
     ingestModelOptions,
     appConfigRestoreRef,
-    thumbCacheStats,
     translationStatus,
     translationUploadRef,
     modelStatus,
@@ -1038,8 +1030,6 @@ export const useSettingsStore = defineStore("settings", () => {
     reloadIngestModels,
     reloadLlmModels,
     refreshDbHealth,
-    loadThumbCacheStats,
-    clearThumbCacheAction,
     loadTranslationStatus,
     onTranslationUploadChange,
     loadModelStatus,

@@ -94,6 +94,20 @@
           <div class="text-subtitle-1 mb-3">{{ t('setup.step.local_library') }}</div>
           <v-alert type="info" variant="tonal">{{ t('setup.local_library.hint') }}</v-alert>
 
+          <!-- An empty library on first run is the most common dead end, so this
+               step points at the uploader explicitly. The upload itself lives in
+               the toolbox file manager, not here -- handing over the path is
+               honest; a button that pretends the wizard can do it is not. -->
+          <div class="d-flex align-center ga-2 flex-wrap mt-4 mb-2">
+            <v-btn color="primary" variant="flat" prepend-icon="mdi-upload" @click="goToUploaderFromWizard">
+              {{ t('setup.local_library.upload') }}
+            </v-btn>
+            <span class="text-body-2 text-medium-emphasis">{{ t('setup.local_library.upload_where') }}</span>
+          </div>
+          <v-alert type="info" variant="tonal" density="comfortable" class="mb-4">
+            {{ t('setup.local_library.upload_after') }}
+          </v-alert>
+
           <!-- Restoring before the first scan is the whole point of offering it
                here: the vectors land in the database, and the scan that follows
                only has to fill in what the backups did not cover. -->
@@ -214,16 +228,19 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { completeSetup, downloadLocalMetadataRestoreLog, getAuthBootstrap, getProviderModels, getSetupStatus, registerAdmin, restoreLocalMetadata, setCsrfToken, validateSetupDb } from "../api";
 import { useAppStore } from "../stores/appStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { apiErrorMessage, MIN_PASSWORD_LENGTH, MIN_USERNAME_LENGTH } from "../utils/apiErrors";
 // Served from `public/ico/` so the PWA manifest and the in-app chrome share it.
 const brandLogo = "/ico/ZingLibLogo_128.png";
 
 const { t } = defineProps({ t: { type: Function, required: true } });
 
 const app = useAppStore();
+const router = useRouter();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
 
@@ -277,6 +294,12 @@ async function runGalleryRestore() {
   try {
     restoreReport.value = await restoreLocalMetadata({ dry_run: false });
     restoreStage.value = "done";
+    // The backend suspends the visual watcher for the restore and then restarts
+    // the container to bring it back; say so, because the page is about to stop
+    // responding and that otherwise looks like the restore killed the app.
+    if (restoreReport.value?.restart_scheduled) {
+      settings.notify(t("settings.local_lib.backup.restarting"), "info");
+    }
   } catch (e) {
     restoreError.value = String(e?.response?.data?.detail || e);
   } finally {
@@ -358,7 +381,7 @@ const setupForm = reactive({
   DATA_UI_THEME_OLED: false,
   POSTGRES_HOST: "localhost",
   POSTGRES_PORT: 5432,
-  POSTGRES_DB: "lrr_library",
+  POSTGRES_DB: "zinglib_library",
   POSTGRES_USER: "postgres",
   POSTGRES_PASSWORD: "",
   POSTGRES_SSLMODE: "prefer",
@@ -651,6 +674,16 @@ async function createAdminInSetup() {
     settings.notify(String(t("auth.register.hint") || "missing username/password"), "warning");
     return;
   }
+  // Answer the two length rules here, so the common mistake never needs a round
+  // trip and never surfaces a server message written for developers.
+  if (username.length < MIN_USERNAME_LENGTH) {
+    settings.notify(t("auth.username_too_short", { n: MIN_USERNAME_LENGTH }), "warning");
+    return;
+  }
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    settings.notify(t("auth.password_too_short", { n: MIN_PASSWORD_LENGTH }), "warning");
+    return;
+  }
   if (password !== password2) {
     settings.notify(t("auth.profile.password_mismatch"), "warning");
     return;
@@ -665,10 +698,25 @@ async function createAdminInSetup() {
     await refreshAdminStepState();
   } catch (e) {
     setupAdminValid.value = false;
-    settings.notify(String(e?.response?.data?.detail || e), "warning");
+    settings.notify(apiErrorMessage(e, t), "warning");
   } finally {
     setupBusy.value = false;
   }
+}
+
+async function goToUploaderFromWizard() {
+  // Uploading galleries lives in the toolbox file manager, not in the wizard, so
+  // this persists whatever the wizard has collected, closes it, and lands the
+  // user where the uploader actually is. Without it, "your library is empty" is
+  // a dead end for anyone who skipped this step.
+  try {
+    await settings.saveConfig();
+  } catch {
+    // A wizard that cannot save the config is a problem for the setup step, not
+    // for getting the user to the uploader; still take them there.
+  }
+  app.showSetupWizard = false;
+  router.push({ path: "/tools", query: { tab: "file_manager" } }).catch(() => null);
 }
 
 async function maybeTriggerSiglipDownload() {

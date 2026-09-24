@@ -1,5 +1,6 @@
 <template>
   <v-card
+    ref="cardEl"
     class="pa-2 hover-preview-card preview-card"
     variant="flat"
     @scroll.passive="onCardScroll"
@@ -179,6 +180,9 @@ const renderedCount = ref(0);
 const thumbLoading = ref(false);
 const initialThumbLoading = ref(false);
 const deferLoadingActive = ref(false);
+// The card is its own scroll container, so it survives the gallery switch that
+// swaps `item` -- and would otherwise keep the previous gallery's offset.
+const cardEl = ref(null);
 let warmLoadTimer = null;
 
 // A preview only ever shows its page images in ~140px grid cells, while the
@@ -583,11 +587,26 @@ function canUseSprite(th) {
   return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 && hasSpriteMeta;
 }
 
+/**
+ * Put the card back at the top. The tablet pane (and the phone sheet, and the
+ * hover ghost) each keep one PreviewCard instance across galleries, so a switch
+ * must clear the offset: the user asked for a new gallery, not for the middle of
+ * the previous one. A component ref on a Vuetify component is the instance, and
+ * `$el` is its single root -- the element that actually scrolls.
+ */
+function resetCardScroll() {
+  const r = cardEl.value;
+  if (!r) return;
+  const el = r.$el || r;
+  if (el && "scrollTop" in el) el.scrollTop = 0;
+}
+
 watch(
   () => `${props.item?.source || ""}:${props.item?.arcid || ""}`,
   () => {
     cancelThumbLoad();
     armThumbLoad();
+    resetCardScroll();
   },
   { immediate: true },
 );

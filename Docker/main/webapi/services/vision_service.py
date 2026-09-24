@@ -76,6 +76,37 @@ def _ensure_runtime_pydeps_path() -> None:
         pass
 
 
+# Download endpoints for the optional runtime. The SigLIP weights come from
+# Hugging Face and the torch/transformers wheels from PyPI; both are frequently
+# unreachable or unusably slow from mainland China, where the direct fetch looks
+# like a hang rather than an error. `DOWNLOAD_MIRROR=cn` swaps in the two mirrors
+# people actually use there. The keys are the upstream, documented environment
+# variables, so huggingface_hub and pip honour them without any extra plumbing.
+_DOWNLOAD_MIRRORS: dict[str, dict[str, str]] = {
+    "cn": {
+        "HF_ENDPOINT": "https://hf-mirror.com",
+        "PIP_INDEX_URL": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    },
+}
+
+
+def _mirror_env() -> dict[str, str]:
+    """Mirror endpoints for model/dependency downloads, from the saved config.
+
+    Never raises: a config lookup failure means "no mirror", not "break the
+    download". A deferred import keeps this module importable from
+    `config_service`'s own import graph.
+    """
+    try:
+        from .config_service import resolve_config
+
+        cfg, _ = resolve_config()
+        preset = str(cfg.get("DOWNLOAD_MIRROR", "") or "").strip().lower()
+    except Exception:
+        return {}
+    return dict(_DOWNLOAD_MIRRORS.get(preset) or {})
+
+
 def _siglip_env_extra() -> dict[str, str]:
     pydeps = str(_runtime_pydeps_dir())
     base_py = str(os.environ.get("PYTHONPATH") or "")
@@ -85,6 +116,7 @@ def _siglip_env_extra() -> dict[str, str]:
         "TRANSFORMERS_CACHE": str(_models_root() / "hf_cache"),
         "PIP_CACHE_DIR": str(_runtime_pip_cache_dir()),
         "PYTHONPATH": py_path,
+        **_mirror_env(),
     }
 
 

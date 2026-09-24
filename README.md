@@ -40,44 +40,57 @@
 
 ### 快速启动
 
-**方式一：直接拉取已发布的镜像（推荐）**
+镜像已公开在 Docker Hub（`jbking114514/zinglib`，同时提供 `linux/amd64` 与 `linux/arm64`）。部署方式按推荐程度排序：
 
-镜像已公开在 Docker Hub，同时提供 `linux/amd64` 与 `linux/arm64`（NAS、树莓派、Mac 都能直接跑），**不需要克隆仓库、不需要本地构建**：
+**方式一：一键 compose（推荐）**
 
-```bash
-docker run -d --name zinglib \
-  -p 8501:8501 \
-  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-  -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:latest data-ui
-```
-
-想固定版本就把 `latest` 换成 `1.0.0`（同样提供 `1.0` / `1` / `sha-<commit>`）。
-
-**方式二：用 `Docker/quick_deploy_docker-compose.yml` 一键拉起**（应用 + pgvector 双容器，同样是拉镜像）
+`Docker/` 下只有**一个** compose 文件，它会把**数据库和应用一起**拉起来。
+⚠️ **别只起应用容器** —— 没有数据库连界面都进不去，这也是不再提供"只起应用"模板的原因。
 
 ```bash
 git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
 docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 ```
 
-数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径是相对 compose 文件解析的，不是相对当前目录），可用 `POSTGRES_DATA_DIR` 与 `YOUR_LOCAL_PATH` 覆盖；要换镜像（比如换成自己构建的）用 `ZINGLIB_IMAGE` 覆盖即可。
+起来后是两个容器：`zinglib-db`（PostgreSQL 17 + pgvector，5432）与 `zinglib`（应用，8501）。
+库名默认 `zinglib_library`；数据默认落在 **compose 文件同级的 `Docker/zinglib/`**，可用 `POSTGRES_DATA_DIR`（数据库）与
+`YOUR_LOCAL_PATH`（应用 runtime）改位置，用 `ZINGLIB_IMAGE` 换成自己构建的镜像。
+
+**方式二：手动单独拉起（自己给 docker 命令）**
+
+想自己控制每一步，或复用你已有的 PostgreSQL：
+
+```bash
+docker network create zinglib-net
+docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zinglib_library \
+  -p 5432:5432 -v /path/to/pgvector:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17
+docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
+  -p 8501:8501 -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
+
+两个容器必须在同一个自建网络里，否则应用解析不到数据库。数据库在**另一台机器**时去掉 `--network`，
+改用 `-e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/zinglib_library?sslmode=disable'` 直接交给应用。
+`--restart unless-stopped` 别省：备份还原完成后应用会**自己重启**来接回自动向量化，没有重启策略就会直接停在关机状态。
 
 **方式三：从源码构建（备选）**
 
 想自己改代码，或需要镜像没提供的架构时才走这条：
 
 ```bash
-cd Docker/main
-docker build -t zinglib:local .
-docker run -d --name zinglib \
-  -p 8501:8501 \
-  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-  -v /path/to/runtime:/app/runtime \
-  zinglib:local data-ui
+cd Docker/main && docker build -t zinglib:local .
 ```
 
-三种方式起来之后都一样：打开 `http://<你的IP>:8501`，跟着 **Setup Wizard** 完成数据库连接与管理员账号创建即可，不需要手动改任何 `.env` 文件。
+然后把镜像喂给方式一的 compose：
+
+```bash
+ZINGLIB_IMAGE=zinglib:local docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+三种方式最后都一样：打开 `http://<你的IP>:8501`，跟着 **Setup Wizard** 完成数据库连接与管理员账号创建 ——
+走方式一/二的话数据库主机填 `zinglib-db`、库名填 `zinglib_library`，**不需要手动改任何 `.env` 文件**。
 
 > 部署细节、目录结构、代理设置 → [**STARTUP.md**](STARTUP.md)
 > 换机器 / 库搬家 / 重建数据库后，怎么找回算了几小时的向量与阅读历史 → [**BACKUP.md**](BACKUP.md)

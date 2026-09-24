@@ -40,8 +40,13 @@ If you do want to change something, the notes below describe how the project cur
 
 Frontend and backend share one origin (the built frontend is served by FastAPI), but can be run separately.
 
-1. **Database**: you need PostgreSQL with `pgvector`. `Docker/pg17_docker-compose.yml` is the quickest way
-   to start just the database.
+1. **Database**: you need PostgreSQL 17+ with `pgvector`. Starting a database-only container is the quickest way:
+   ```bash
+   docker run -d --name zinglib-db \
+     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zinglib_library \
+     -p 5432:5432 -v /path/to/pgvector:/var/lib/postgresql/data \
+     pgvector/pgvector:pg17
+   ```
 2. **Backend (FastAPI)**:
    ```bash
    cd Docker/main
@@ -60,7 +65,7 @@ Frontend and backend share one origin (the built frontend is served by FastAPI),
    Configure a proxy in `vite.config.js` to forward `/api` to your local FastAPI port, keeping things same-origin.
 
 > The full development notes, what a fresh clone can run, and what CI runs live in
-> [**STARTUP_EN.md**](STARTUP_EN.md), section 8 ("Development & Verification").
+> [**STARTUP_EN.md**](STARTUP_EN.md), section 7 ("Development & Verification").
 
 ---
 

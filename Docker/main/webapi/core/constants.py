@@ -12,7 +12,6 @@ RESTORE_LOG_DIR = RUNTIME_DIR / "restore_logs"
 MAX_RESTORE_LOGS = 20
 APP_CONFIG_FILE = RUNTIME_DIR / "app_config.json"
 APP_CONFIG_KEY_FILE = RUNTIME_DIR / ".app_config.key"
-THUMB_CACHE_DIR = RUNTIME_DIR / "thumb_cache"
 THUMB_GALLARY_DIR = Path(os.getenv("DATA_UI_THUMB_GALLARY_DIR", "/app/runtime/thumb_gallary"))
 GALLERY_CACHE_DIR = RUNTIME_DIR / "gallery_cache"
 TRANSLATION_DIR = RUNTIME_DIR / "translations"
@@ -25,15 +24,25 @@ MAX_HOME_FEED_LIMIT = 100
 
 CONFIG_SCOPE = "global"
 
+# The database password a fresh install ships with. It exists only so the
+# settings banner can tell whether the user ever changed it -- nothing in the app
+# authenticates with this literal, and an empty stored password counts as
+# "unchanged" as well (see `config_service.default_credentials_in_use`).
+DEFAULT_POSTGRES_PASSWORD = "postgres"
+
 DEFAULT_SCHEDULE = {
     "local_ingest": {"enabled": False, "cron": "10 * * * *"},
 }
 
 CONFIG_SPECS: dict[str, dict[str, Any]] = {
     "POSTGRES_DSN": {"type": "text", "default": "", "secret": True},
-    "POSTGRES_HOST": {"type": "text", "default": "pgvector-db"},
+    # These defaults have to match what `Docker/quick_deploy_docker-compose.yml`
+    # actually creates, because the setup wizard prefills them and a value that
+    # does not exist yet (a container name or database that was never started)
+    # reads as "the app is broken" rather than "you have not entered this yet".
+    "POSTGRES_HOST": {"type": "text", "default": "zinglib-db"},
     "POSTGRES_PORT": {"type": "int", "default": 5432, "min": 1, "max": 65535},
-    "POSTGRES_DB": {"type": "text", "default": "lrr_library"},
+    "POSTGRES_DB": {"type": "text", "default": "zinglib_library"},
     "POSTGRES_USER": {"type": "text", "default": "postgres"},
     "POSTGRES_PASSWORD": {"type": "text", "default": "", "secret": True},
     "POSTGRES_SSLMODE": {"type": "text", "default": "prefer"},
@@ -124,6 +133,12 @@ CONFIG_SPECS: dict[str, dict[str, Any]] = {
     "LLM_MODEL_CUSTOM": {"type": "text", "default": ""},
     "EMB_MODEL_CUSTOM": {"type": "text", "default": ""},
     "SIGLIP_MODEL": {"type": "text", "default": "google/siglip-so400m-patch14-384"},
+    # Where the SigLIP weights and the runtime Python dependencies are fetched
+    # from. Empty keeps the upstream defaults (Hugging Face + PyPI), which is
+    # what an existing install already has; "cn" points both at the mirrors that
+    # are reachable from mainland China, where the direct download is often slow
+    # enough to look like a hang. See `vision_service._mirror_env`.
+    "DOWNLOAD_MIRROR": {"type": "text", "default": ""},
     "SIGLIP_WORKER_ENABLED": {"type": "bool", "default": True},
     "SIGLIP_DEVICE": {"type": "text", "default": "cpu"},
     "WORKER_BATCH": {"type": "int", "default": 32, "min": 1, "max": 512},

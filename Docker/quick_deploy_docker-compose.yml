@@ -7,18 +7,32 @@
 services:
   pg17:
     image: pgvector/pgvector:pg17
-    container_name: pgvector-db
+    container_name: zinglib-db
+    # `pgvector-db` is the container name v1.0.0 shipped, and the Setup Wizard
+    # told users to type it. Anyone who has upgraded kept it in the saved config,
+    # which is resolved with higher precedence than these environment defaults --
+    # so without this alias the application rebuilds its DSN against a hostname
+    # that no longer resolves and cannot connect at all. Keep both names working;
+    # the alias costs nothing and removes the whole class of upgrade breakage.
+    networks:
+      default:
+        aliases:
+          - pgvector-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}   # <-- 数据库用户名，默认为 postgres/Default username for the database, default is postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres} # <-- 数据库密码，默认为 postgres/Default password for the database, default is postgres
-      POSTGRES_DB: ${POSTGRES_DB:-lrr_library} # <-- 数据库名称，默认为 lrr_library/Default database name, default is lrr_library
+      POSTGRES_DB: ${POSTGRES_DB:-zinglib_library} # <-- 数据库名称，默认为 zinglib_library/Default database name, default is zinglib_library
     ports:
       - "5432:5432"
     volumes:
       - ${POSTGRES_DATA_DIR:-./zinglib/pgvector}:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lrr_library}"]
+      # `pg_isready` only reports whether the server answers -- it never checks
+      # that the named database exists (`-d definitely_not_here` also returns
+      # "accepting connections"). `-d` here just keeps the probe honest about
+      # which server we mean to be talking to.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-zinglib_library}"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -39,13 +53,25 @@ services:
     environment:
       THUMB_CLIENT_ROTATE_S: ${THUMB_CLIENT_ROTATE_S:-1200}
       THUMB_CLIENT_KEEPALIVE_EXPIRY_S: ${THUMB_CLIENT_KEEPALIVE_EXPIRY_S:-8}
-      #如果你在国内网络环境下使用，并且需要通过 HTTP 代理访问外部资源，请取消下列注释并设置以下环境变量（替换 YOUR_PROXY_HOST 和 YOUR_PROXY_PORT）：
-      #Pleasue uncomment the following lines if you are using in a domestic network environment and need to access external resources through an HTTP proxy:
-      #如果你使用了代理，并且需要让容器内的应用访问本地服务（如数据库），请确保 no_proxy 环境变量中包含 localhost，和pgvector的IP地址，以避免代理干扰本地通信。
-      #If you are using a proxy and need to allow applications within the container to access local services (like the database), make sure to include localhost and the IP address of pgvector in the no_proxy environment variable to prevent the proxy from interfering with local communication.
-      #no_proxy: localhost,${PGVECTOR_IP:-172.16.0.2}
-      #http_proxy: http://{YOUR_PROXY_HOST}:{YOUR_PROXY_PORT:-8888},
-      #https_proxy: http://{YOUR_PROXY_HOST}:{YOUR_PROXY_PORT:-8888}
+      # The same coordinates `pg17` was just started with, so one `.env` drives
+      # both sides. Without them the application falls back to the spec defaults
+      # in `webapi/core/constants.py`, and a `.env` that renames the database,
+      # the user or the password would move the database container and leave the
+      # app still connecting to the old name.
+      #
+      # On a brand-new database the app still lands in the Setup Wizard: there
+      # is no config table to read yet, so these decide which values the wizard
+      # starts from rather than skipping it. On an existing install they lose to
+      # the saved config (resolution order is db > json > env).
+      POSTGRES_HOST: ${POSTGRES_HOST:-zinglib-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-zinglib_library}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
+      # `POSTGRES_DSN` is deliberately not forwarded: `_build_dsn` rebuilds the
+      # URL from the parts above whenever host, user and database are all set,
+      # so a DSN here would be silently ignored.
     volumes:
       - ${YOUR_LOCAL_PATH:-./zinglib/runtime}:/app/runtime
     restart: unless-stopped

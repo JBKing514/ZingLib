@@ -26,6 +26,8 @@ from ..services.auth_service import (
     issue_recovery_csrf,
     issue_csrf_token,
     record_login_failure,
+    PasswordTooShortError,
+    UsernameTooShortError,
     register_first_admin,
     revoke_session as auth_revoke_session,
     update_username as auth_update_username,
@@ -84,6 +86,21 @@ def auth_bootstrap(request: Request) -> dict[str, Any]:
     }
 
 
+def _credential_error_detail(exc: Exception) -> dict[str, Any]:
+    """A shape the UI can turn into its own language.
+
+    `{code, field, min_length, message}` instead of a bare developer string: the
+    frontend maps `code` to a localised hint, and `message` stays as the English
+    fallback for any client that does not know the code yet.
+    """
+    return {
+        "code": str(getattr(exc, "code", "invalid_credential")),
+        "field": str(getattr(exc, "field", "")),
+        "min_length": int(getattr(exc, "min_length", 0) or 0),
+        "message": str(exc),
+    }
+
+
 @router.post("/api/auth/register-admin")
 def auth_register_admin(req: AuthRegisterRequest, request: Request, response: Response) -> dict[str, Any]:
     dsn = db_dsn()
@@ -103,6 +120,8 @@ def auth_register_admin(req: AuthRegisterRequest, request: Request, response: Re
         return {"ok": True, "user": user, "session": sess}
     except PermissionError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except (PasswordTooShortError, UsernameTooShortError) as e:
+        raise HTTPException(status_code=400, detail=_credential_error_detail(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -269,6 +288,8 @@ def auth_password_update(req: AuthChangePasswordRequest, request: Request, respo
             force_change_password_by_username(dsn, req.username, req.new_password, pepper=auth_pepper())
         else:
             auth_change_password(dsn, uid, req.old_password, req.new_password, pepper=auth_pepper())
+    except (PasswordTooShortError, UsernameTooShortError) as e:
+        raise HTTPException(status_code=400, detail=_credential_error_detail(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

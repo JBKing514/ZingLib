@@ -195,9 +195,12 @@
                 />
               </div>
 
-              <div class="d-flex justify-end ga-2 mt-3">
+              <div class="d-flex justify-space-between align-center mt-3">
                 <v-btn variant="text" @click="clearFilters">{{ t('home.filter.clear') }}</v-btn>
-                <v-btn color="primary" variant="flat" @click="applyFilters">{{ t('home.filter.apply') }}</v-btn>
+                <div class="d-flex ga-2">
+                  <v-btn variant="text" @click="cancelFilters">{{ t('home.filter.cancel') }}</v-btn>
+                  <v-btn color="primary" variant="flat" @click="applyFilters">{{ t('home.filter.apply') }}</v-btn>
+                </div>
               </div>
             </v-card>
           </v-dialog>
@@ -298,6 +301,10 @@ const hasMore = ref(false);
 const searchQuery = ref("");
 const filtersOpen = ref(false);
 const filters = ref({ categories: [], tags: [], minRating: 0 });
+// What `filters` looked like when the dialog opened. The inputs are bound
+// straight to `filters` with v-model, so a plain "close the dialog" would leave
+// every edit in place and the Cancel button would be a lie.
+const filtersDraft = ref(null);
 const filterTagInput = ref("");
 const filterTagSuggestions = ref([]);
 const seedStack = ref([]);
@@ -433,6 +440,23 @@ watch(
     pushedPreviewState.value = false;
   },
 );
+
+// Roll the filters back whenever the dialog closes without Apply. One watcher
+// covers every exit: the Cancel button, a backdrop click and Esc (the dialog is
+// not persistent, so Vuetify writes `false` through the v-model without calling
+// any handler), popstate (onPopState), and the overlay itself closing under it.
+// `applyFilters` is the one exit that keeps the edits, so it drops the snapshot
+// first -- that is the whole commit signal.
+watch(filtersOpen, (openNow) => {
+  if (openNow) {
+    filtersDraft.value = JSON.parse(JSON.stringify(filters.value || {}));
+    return;
+  }
+  if (filtersDraft.value) {
+    filters.value = filtersDraft.value;
+    filtersDraft.value = null;
+  }
+});
 
 function effectiveCategories() {
   const all = (props.categoryDefs || []).map((x) => x.key);
@@ -623,7 +647,17 @@ function clearFilters() {
   filterTagSuggestions.value = [];
 }
 
+// Dismiss the dialog without touching the grid. Closing is all this has to do:
+// the watcher restores the snapshot, which is also what a backdrop click and Esc
+// get.
+function cancelFilters() {
+  filtersOpen.value = false;
+}
+
 function applyFilters() {
+  // Commit: drop the snapshot first, so the watcher's close edge sees nothing to
+  // roll back and the edits survive.
+  filtersDraft.value = null;
   filtersOpen.value = false;
   previewItem.value = null;
   loadExplore(true).catch(() => null);

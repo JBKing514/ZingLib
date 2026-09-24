@@ -17,6 +17,21 @@
       <v-col cols="12" md="6"><v-text-field v-model="config.INGEST_VL_MODEL_CUSTOM" :label="t('settings.provider.ingest_vl_model_custom')" clearable variant="outlined" density="compact" color="primary" /></v-col>
       <v-col cols="12" md="6"><v-text-field v-model="config.INGEST_EMB_MODEL_CUSTOM" :label="t('settings.provider.ingest_emb_model_custom')" clearable variant="outlined" density="compact" color="primary" /></v-col>
       <v-col cols="12" md="6"><v-text-field v-model="config.SIGLIP_MODEL" :label="t('settings.provider.siglip_model')" variant="outlined" density="compact" color="primary" /></v-col>
+      <!-- The direct fetch is often too slow to finish from mainland China, and a
+           download that never progresses reads as a hang; this swaps both the
+           model host and the package index without touching anything else. -->
+      <v-col cols="12" md="6">
+        <v-select
+          v-model="config.DOWNLOAD_MIRROR"
+          :items="downloadMirrorOptions"
+          :label="t('settings.provider.download_mirror')"
+          :hint="t('settings.provider.download_mirror_hint')"
+          persistent-hint
+          variant="outlined"
+          density="compact"
+          color="primary"
+        />
+      </v-col>
       <v-col cols="12" md="6"><v-switch v-model="config.SIGLIP_WORKER_ENABLED" :label="t('settings.provider.siglip_worker_enabled')" color="primary" inset hide-details @update:model-value="onToggleSiglipWorker" /></v-col>
 
       <v-col cols="12"><v-divider class="my-2" /></v-col>
@@ -58,13 +73,19 @@
 </template>
 
 <script>
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useSettingsStore } from "../../stores/settingsStore";
 
 export default {
   setup() {
     const store = useSettingsStore();
     const confirmReadEventsDialog = ref(false);
+    const tt = (key, vars = {}) => store.t(key, vars);
+
+    const downloadMirrorOptions = computed(() => [
+      { value: "", title: tt("settings.provider.download_mirror_upstream") },
+      { value: "cn", title: tt("settings.provider.download_mirror_cn") },
+    ]);
 
     function openReadEventsConfirm() {
       confirmReadEventsDialog.value = true;
@@ -86,6 +107,7 @@ export default {
       openReadEventsConfirm,
       confirmClearReadEventsNow,
       onToggleSiglipWorker,
+      downloadMirrorOptions,
     };
   },
 };

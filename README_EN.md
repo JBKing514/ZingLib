@@ -40,44 +40,61 @@ Prefer local models over cloud APIs -- this is your own library.
 
 ### Quick start
 
-**Option 1 -- pull the published image (recommended)**
+The image is public on Docker Hub (`jbking114514/zinglib`, both `linux/amd64` and `linux/arm64`). The deployment options are ordered by preference:
 
-The image is public on Docker Hub and ships both `linux/amd64` and `linux/arm64` (so a NAS, a Raspberry Pi or a Mac all work). No clone, no local build:
+**Option 1 -- one-command compose (recommended)**
 
-```bash
-docker run -d --name zinglib \
-  -p 8501:8501 \
-  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-  -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:latest data-ui
-```
-
-Pin a version by replacing `latest` with `1.0.0` (`1.0`, `1` and `sha-<commit>` are published too).
-
-**Option 2 -- `Docker/quick_deploy_docker-compose.yml`** (application + pgvector in one file, also pulling the image)
+`Docker/` contains **exactly one** compose file, and it brings up the **database and the application together**.
+⚠️ **Do not start the application container alone** -- without a database you cannot get past the login screen, which
+is why there is no longer an app-only template.
 
 ```bash
 git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
 docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 ```
 
-Data lands in **`Docker/zinglib/`, beside the compose file** (relative paths inside a compose file resolve against that file, not against your current directory); override with `POSTGRES_DATA_DIR` and `YOUR_LOCAL_PATH`. Set `ZINGLIB_IMAGE` to point at a different image (your own build, for instance).
+That gives you two containers: `zinglib-db` (PostgreSQL 17 + pgvector, 5432) and `zinglib` (the application, 8501).
+The database defaults to `zinglib_library`; data lands in **`Docker/zinglib/`, beside the compose file**, and
+`POSTGRES_DATA_DIR` (database) / `YOUR_LOCAL_PATH` (application runtime) move it, while `ZINGLIB_IMAGE` swaps in your own build.
+
+**Option 2 -- manual containers (your own `docker` commands)**
+
+For when you want to control each step, or reuse a PostgreSQL you already run:
+
+```bash
+docker network create zinglib-net
+docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zinglib_library \
+  -p 5432:5432 -v /path/to/pgvector:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17
+docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
+  -p 8501:8501 -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
+
+Both containers must share the network you create, or the application cannot resolve the database. If the database is
+on **another machine**, drop `--network` and hand the application a DSN instead:
+`-e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/zinglib_library?sslmode=disable'`.
+Do not drop `--restart unless-stopped`: after a metadata restore the application **restarts itself** to take automatic
+embedding back, and without a restart policy it would simply stay down.
 
 **Option 3 -- build from source (fallback)**
 
 For when you want to change the code, or need an architecture the published image does not cover:
 
 ```bash
-cd Docker/main
-docker build -t zinglib:local .
-docker run -d --name zinglib \
-  -p 8501:8501 \
-  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-  -v /path/to/runtime:/app/runtime \
-  zinglib:local data-ui
+cd Docker/main && docker build -t zinglib:local .
 ```
 
-All three end the same way: open `http://<your-ip>:8501` and follow the **Setup Wizard** to configure the database and create the first admin account. No `.env` editing.
+Then feed that image to the Option 1 compose file:
+
+```bash
+ZINGLIB_IMAGE=zinglib:local docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+All three end the same way: open `http://<your-ip>:8501` and follow the **Setup Wizard** to configure the database and
+create the first admin account. On Option 1/2 the database host is `zinglib-db` and the database name is
+`zinglib_library`. No `.env` editing.
 
 > Deployment details, directory layout, proxy settings -> [**STARTUP_EN.md**](STARTUP_EN.md)
 > New machine, relocated library, or a rebuilt database -- how to get back the hours of embeddings and your reading history -> [**BACKUP_EN.md**](BACKUP_EN.md)

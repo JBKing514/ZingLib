@@ -25,9 +25,6 @@ from ..services.local_lib_service import (
     _natural_sort_key,
     _relative_local_dir,
     _safe_join_local_dir,
-    enrich_local_work_metadata,
-    flatten_local_dirs,
-    local_flatten_gaps,
     local_metadata_gaps,
     local_arcid_from_dir,
     scan_local_lib,
@@ -54,6 +51,7 @@ from ..services.tag_reapply_service import (
     start_reapply as start_tag_reapply,
 )
 from ..services.db_service import query_rows
+from ..services.local_embedding_service import stop_local_embedding_worker_until_restart
 from ..services.search_service import _item_from_work
 
 router = APIRouter(tags=["local-lib"])
@@ -95,7 +93,7 @@ def _reject_if_tag_reapply_running(action: str) -> None:
     """Refuse a bulk tag/dir writer while the tag re-apply job owns the rows.
 
     The re-apply rewrites ``works.tags`` and the tag half of ``raw`` for the
-    whole library in chunks. A concurrent scan/refetch/batch-update would race
+    whole library in chunks. A concurrent scan/batch-update would race
     those writes (and re-introduce the stale representation the job only just
     removed), so bulk writers politely step aside instead of interleaving.
     """
@@ -408,8 +406,8 @@ def _apply_meta_changes(
         else:
             user_meta.pop("title", None)
 
-    # Ledger of hand-picked tags, kept under raw.user_meta. Both the metadata
-    # refetch and the tag re-apply rebuild works.tags from the ComicInfo source,
+    # Ledger of hand-picked tags, kept under raw.user_meta. Both the scan and the
+    # tag re-apply rebuild works.tags from the ComicInfo source,
     # and their raw patch explicitly excludes user_meta -- so this list is what
     # survives them. It takes over the job the retired `user:` prefix used to do
     # (the re-apply SQL used to look for exactly that prefix).
@@ -1036,50 +1034,6 @@ def cancel_tag_reapply_job() -> dict[str, Any]:
     return {"ok": True, "state": cancel_tag_reapply()}
 
 
-@router.post("/api/local-lib/metadata/refetch")
-def refetch_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    req = dict(payload or {})
-    arcids = [str(x or "").strip() for x in (req.get("arcids") or []) if str(x or "").strip()]
-    arcids = list(dict.fromkeys(arcids))
-    force = bool(req.get("force", True))
-    if not arcids:
-        raise HTTPException(status_code=400, detail="arcids required")
-    _reject_if_tag_reapply_running("metadata refetch")
-    rows = []
-    ok = 0
-    failed = 0
-    for arcid in arcids:
-        try:
-            r = enrich_local_work_metadata(arcid, force=force)
-            if bool(r.get("ok")):
-                ok += 1
-            else:
-                failed += 1
-            rows.append(r)
-        except Exception as e:
-            failed += 1
-            rows.append(
-                {
-                    "ok": False,
-                    "arcid": arcid,
-                    "code": "WRITE_DB_FAILED",
-                    "reason": "unexpected error",
-                    "detail": str(e),
-                    "hint": "",
-                    "trace_id": "",
-                }
-            )
-    failed_rows = [r for r in rows if not bool((r or {}).get("ok"))]
-    first_failed = failed_rows[0] if failed_rows else {}
-    return {
-        "ok": True,
-        "rows": rows,
-        "done": ok,
-        "failed": failed,
-        "first_failed": first_failed,
-    }
-
-
 def _restore_log_line_count(path: Path) -> int:
     """How many report lines were written; 0 when the file cannot be read."""
     try:
@@ -1108,6 +1062,18 @@ def restore_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, A
     req = dict(payload or {})
     dry_run = bool(req.get("dry_run") or False)
     _reject_if_tag_reapply_running("metadata restore")
+
+    # The visual-embedding watcher must not run while rows are being rewritten
+    # underneath it. It picks up galleries with a missing vector, so it can
+    # recompute -- and overwrite -- exactly the vectors this restore is putting
+    # back, which is the hours of compute the feature exists to avoid redoing.
+    # The stop is in-memory ("until restart"), so the restart at the end of this
+    # request is what hands the watcher back; see `request_process_restart`.
+    if not dry_run:
+        try:
+            stop_local_embedding_worker_until_restart()
+        except Exception:
+            pass
 
     from ..services.gallery_metadata_backup import restore_sidecars
 
@@ -1158,6 +1124,7 @@ def restore_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, A
         except Exception:
             pass
 
+    restart_scheduled = False
     try:
         report = restore_sidecars(
             dry_run=dry_run,
@@ -1168,6 +1135,20 @@ def restore_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, A
     finally:
         if log_file is not None:
             log_file.close()
+        if not dry_run:
+            # Whatever the outcome, the watcher is still suspended and a restart
+            # is the only way to hand it back -- so this runs even when the
+            # restore raised. Skipping it would leave automatic visual embedding
+            # off until the user restarted the container by hand.
+            try:
+                from .system import request_process_restart
+
+                request_process_restart()
+                restart_scheduled = True
+            except Exception:
+                restart_scheduled = False
+    if not dry_run:
+        report["restart_scheduled"] = bool(restart_scheduled)
     if log_id and log_path is not None and log_path.is_file():
         report["log_id"] = log_id
         report["log_lines"] = _restore_log_line_count(log_path)
@@ -1180,6 +1161,173 @@ def restore_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, A
         except Exception:
             pass
     return report
+
+
+@router.post("/api/local-lib/metadata/writeback")
+def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Write the database's metadata back onto disk: ComicInfo.xml + the sidecar.
+
+    This exists for the migration case. A library whose metadata only lives in the
+    database -- imported by an earlier tool, or restored after a rebuild -- has no
+    trigger to put it back on disk, so a later re-ingest would read whatever stale
+    ComicInfo the files still carry and quietly overwrite the newer values. Both
+    outputs are formats ZingLib reads back: ComicInfo.xml is the sidecar-free
+    interchange format (Komga/LANraragi understand it too), and
+    `.zinglib_meta/<arcid>_zinglib_metadata.json` is ZingLib's own backup.
+
+    The title written is the one the UI shows -- ``raw.user_meta.title`` when the
+    user renamed the gallery, falling back to ``works.title``. ComicInfo is where
+    a renamed gallery would otherwise be stamped back with its stale official
+    title, which is the opposite of what this route is for.
+
+    ``dry_run`` reports what would be touched without writing, and runs the *same*
+    eligibility checks the write path enforces, so the dialog cannot promise
+    writes the confirmed run then skips. ComicInfo and sidecar eligibility are
+    independent: a gallery without a visual vector can still receive ComicInfo,
+    while a missing gallery path does not prevent an existing database vector
+    from being backed up. Archives are handled by `write_comicinfo` (it rewrites
+    the member in place, not the file).
+
+    The sidecar step queries once per gallery on purpose. A sidecar carries that
+    gallery's own vectors, so fetching every gallery's vectors in one statement
+    would pull megabytes of vector text into memory to do exactly the same disk
+    work and fail in the same places. The route is administrator-only and only
+    runs when a user asks for it from Settings.
+
+    The tag re-apply guard mirrors the one on the restore: that job rewrites
+    ``works.tags`` for the whole library in chunks, and this route copies
+    ``works.tags`` onto disk. Interleaving them would put a pre-run tag set into
+    ComicInfo.xml, which the next scan would then read back over the newer
+    database values -- the stale representation the job exists to remove.
+    """
+    _reject_if_tag_reapply_running("metadata writeback")
+    req = dict(payload or {})
+    dry_run = bool(req.get("dry_run") or False)
+    want_comicinfo = bool(req.get("comicinfo", True))
+    want_sidecar = bool(req.get("sidecar", True))
+    wanted = [str(x).strip() for x in (req.get("arcids") or []) if str(x).strip()]
+
+    # `raw` is selected because the title the UI shows is
+    # `raw.user_meta.title || works.title`: selecting `title` alone would stamp
+    # the stale official title over every gallery the user renamed.
+    # `has_cover` mirrors `write_sidecar`'s own refusal to back up a gallery with
+    # no visual vector -- there is nothing expensive to protect yet -- so the
+    # preview can report that skip instead of the confirmed run failing on it.
+    sql = (
+        "SELECT arcid, title, tags, local_dir, raw, "
+        "(visual_embedding IS NOT NULL) AS has_cover "
+        "FROM works WHERE source = 'local'"
+    )
+    params: tuple[Any, ...] = ()
+    if wanted:
+        sql += " AND arcid = ANY(%s::text[])"
+        params = (wanted,)
+    rows = query_rows(sql + " ORDER BY arcid", params)
+
+    from ..services.gallery_metadata_backup import write_sidecar
+    from ..services.local_lib_service import comicinfo_target_exists, write_comicinfo
+
+    total = len(rows)
+    sidecar_written = 0
+    comicinfo_written = 0
+    skipped = 0
+    failed = 0
+    details: list[dict[str, Any]] = []
+    detail_cap = 200
+
+    def _display_title(row: dict[str, Any]) -> str:
+        """`raw.user_meta.title || works.title` -- the rule the API returns."""
+        raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+        user_meta = raw.get("user_meta") if isinstance(raw.get("user_meta"), dict) else {}
+        return str(user_meta.get("title") or "").strip() or str(row.get("title") or "").strip()
+
+    for row in rows:
+        arcid = str(row.get("arcid") or "").strip()
+        local_dir = str(row.get("local_dir") or "").strip().replace("\\", "/").strip("/")
+        title_txt = _display_title(row)
+        tags = [str(x or "").strip() for x in (row.get("tags") or []) if str(x or "").strip()]
+        row_note: dict[str, Any] = {"arcid": arcid, "local_dir": local_dir}
+        comicinfo_reason = ""
+        sidecar_reason = ""
+        comicinfo_eligible = bool(want_comicinfo and local_dir and comicinfo_target_exists(local_dir))
+        sidecar_eligible = bool(want_sidecar and arcid and row.get("has_cover"))
+        if want_comicinfo and not comicinfo_eligible:
+            comicinfo_reason = "no local_dir" if not local_dir else "path not found"
+        if want_sidecar and not sidecar_eligible:
+            sidecar_reason = "no arcid" if not arcid else "no visual embedding"
+
+        # A row is skipped only when none of its requested outputs can be written.
+        # One unavailable output must never suppress the other one.
+        if not (comicinfo_eligible or sidecar_eligible):
+            skipped += 1
+            reasons = [x for x in (comicinfo_reason, sidecar_reason) if x]
+            row_note.update(
+                {
+                    "ok": False,
+                    "reason": "; ".join(reasons) or "no output requested",
+                    "comicinfo": False,
+                    "sidecar": False,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_reason": sidecar_reason,
+                }
+            )
+        elif dry_run:
+            row_note.update(
+                {
+                    "ok": True,
+                    "dry_run": True,
+                    "title": title_txt,
+                    "tags": len(tags),
+                    "comicinfo": comicinfo_eligible,
+                    "sidecar": sidecar_eligible,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_reason": sidecar_reason,
+                }
+            )
+        else:
+            ok_ci: bool | None = None
+            ok_sc: bool | None = None
+            if comicinfo_eligible:
+                try:
+                    ok_ci = bool(write_comicinfo(local_dir, title_txt, tags))
+                except Exception:
+                    ok_ci = False
+            if sidecar_eligible:
+                try:
+                    ok_sc = bool(write_sidecar(arcid))
+                except Exception:
+                    ok_sc = False
+            sidecar_written += 1 if ok_sc is True else 0
+            comicinfo_written += 1 if ok_ci is True else 0
+            attempted_results = [x for x in (ok_ci, ok_sc) if x is not None]
+            row_ok = bool(attempted_results) and all(attempted_results)
+            if not row_ok:
+                failed += 1
+            row_note.update(
+                {
+                    "ok": row_ok,
+                    "comicinfo": ok_ci,
+                    "sidecar": ok_sc,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_reason": sidecar_reason,
+                }
+            )
+        if len(details) < detail_cap:
+            details.append(row_note)
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "total": total,
+        "sidecar_written": sidecar_written,
+        "comicinfo_written": comicinfo_written,
+        "skipped": skipped,
+        "failed": failed,
+        "details": details,
+        "details_truncated": total > detail_cap,
+        "wrote_comicinfo": want_comicinfo,
+        "wrote_sidecar": want_sidecar,
+    }
 
 
 @router.get("/api/local-lib/metadata/restore-log/{log_id}")
@@ -1502,28 +1650,6 @@ def local_lib_meta_batch_update(payload: dict[str, Any] | None = None) -> dict[s
             out_rows.append({"arcid": arcid, "ok": False, "reason": str(e)})
 
     return {"ok": True, "done": int(done), "skipped": int(skipped), "failed": int(failed), "rows": out_rows}
-
-
-@router.get("/api/local-lib/flatten-gaps")
-def list_local_flatten_gaps(limit: int = 500, offset: int = 0) -> dict[str, Any]:
-    return local_flatten_gaps(limit=limit, offset=offset)
-
-
-@router.post("/api/local-lib/flatten")
-def run_local_flatten(payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    req = dict(payload or {})
-    arcids = [str(x or "").strip() for x in (req.get("arcids") or []) if str(x or "").strip()]
-    if not arcids:
-        raise HTTPException(status_code=400, detail="arcids required")
-    # Flatten remaps local_dir, which the re-apply reads as its ComicInfo
-    # fallback path, so the two must not overlap.
-    _reject_if_tag_reapply_running("flatten")
-    result = flatten_local_dirs(arcids)
-    try:
-        scan_local_lib(path_hint="")
-    except Exception:
-        pass
-    return result
 
 
 @router.post("/api/local-lib/delete")

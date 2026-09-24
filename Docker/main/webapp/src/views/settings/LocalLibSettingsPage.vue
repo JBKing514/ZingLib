@@ -4,9 +4,8 @@
     <div class="text-body-2 text-medium-emphasis mb-3">{{ t("settings.local_lib.hint_local") }}</div>
     <div class="d-flex ga-2 flex-wrap">
       <v-btn color="primary" :loading="scanning" prepend-icon="mdi-refresh" @click="scanNow">{{ t("settings.local_lib.scan") }}</v-btn>
-      <v-btn color="secondary" variant="tonal" :loading="loadingGaps || loadingFlatten" prepend-icon="mdi-database-search" @click="reloadAll">{{ t("settings.local_lib.reload") }}</v-btn>
+      <v-btn color="secondary" variant="tonal" prepend-icon="mdi-restore" @click="reloadAll">{{ t("settings.local_lib.reload") }}</v-btn>
       <v-btn color="warning" variant="tonal" :loading="clearingThumbCache" prepend-icon="mdi-image-off-outline" @click="clearLocalThumbCacheNow">{{ t("settings.local_lib.clear_thumb_cache") }}</v-btn>
-      <v-btn color="primary" variant="tonal" :disabled="!selectedArcids.length" :loading="refetching" prepend-icon="mdi-database-refresh" @click="refetchSelected">{{ t("settings.local_lib.refetch_selected") }}</v-btn>
     </div>
     <v-row class="mt-2">
       <v-col cols="12" md="6">
@@ -111,8 +110,52 @@
       >
         {{ t("settings.local_lib.backup.restore") }}
       </v-btn>
+      <!-- The other direction: the database is the source of truth here, and the
+           files on disk are stale. Needed when a library was imported by another
+           tool, so nothing ever wrote a ComicInfo.xml back. -->
+      <v-btn
+        color="secondary"
+        variant="tonal"
+        prepend-icon="mdi-file-export-outline"
+        :loading="writebackBusy"
+        @click="openWritebackDialog"
+      >
+        {{ t("settings.local_lib.writeback.action") }}
+      </v-btn>
     </div>
+    <div class="text-caption text-medium-emphasis mt-2">{{ t("settings.local_lib.writeback.hint") }}</div>
   </v-card>
+
+  <v-dialog v-model="writebackDialog" max-width="560">
+    <v-card>
+      <v-card-title class="text-subtitle-1">{{ t("settings.local_lib.writeback.dialog_title") }}</v-card-title>
+      <v-card-text>
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+          {{ t("settings.local_lib.writeback.preview_note") }}
+        </v-alert>
+        <div class="text-body-2">
+          {{ t("settings.local_lib.writeback.preview", {
+            total: Number(writebackReport?.total || 0),
+            skipped: Number(writebackReport?.skipped || 0),
+          }) }}
+        </div>
+        <v-alert v-if="writebackDone" type="success" variant="tonal" density="compact" class="mt-3">
+          {{ t("settings.local_lib.writeback.done", {
+            comicinfo: Number(writebackReport?.comicinfo_written || 0),
+            sidecar: Number(writebackReport?.sidecar_written || 0),
+            failed: Number(writebackReport?.failed || 0),
+          }) }}
+        </v-alert>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" @click="writebackDialog = false">{{ t("settings.local_lib.backup.close") }}</v-btn>
+        <v-btn color="primary" :loading="writebackBusy" :disabled="writebackDone" @click="runWriteback">
+          {{ t("settings.local_lib.writeback.confirm") }}
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 
   <!-- The restore is a two-step flow on purpose: the same endpoint is asked
        twice, once as a dry run so the user can see the plan, then for real.
@@ -408,45 +451,6 @@
     <div v-else class="text-medium-emphasis">{{ t("settings.local_lib.namespace.empty") }}</div>
   </v-card>
 
-  <v-card class="pa-4 mb-4" variant="flat">
-    <div class="d-flex align-center justify-space-between ga-2 mb-2 flex-wrap">
-      <div class="text-subtitle-2 font-weight-medium">{{ t("settings.local_lib.gap_title") }}</div>
-      <div class="d-flex ga-2">
-        <v-btn size="small" variant="text" @click="selectAllMetadata">{{ t("settings.local_lib.select_all") }}</v-btn>
-        <v-btn size="small" variant="text" @click="clearAllMetadata">{{ t("settings.local_lib.clear_all") }}</v-btn>
-      </div>
-    </div>
-    <v-list v-if="gapItems.length" lines="two" class="bg-transparent">
-      <v-list-item v-for="it in gapItems" :key="it.arcid" :title="it.title || it.arcid" :subtitle="gapSubtitle(it)">
-        <template #prepend>
-          <v-checkbox v-model="selectedArcids" :value="it.arcid" hide-details density="compact" color="primary" />
-        </template>
-      </v-list-item>
-    </v-list>
-    <div v-else class="text-medium-emphasis">{{ t("settings.local_lib.gap_empty") }}</div>
-  </v-card>
-
-  <v-card class="pa-4" variant="flat">
-    <div class="d-flex align-center justify-space-between ga-2 mb-2 flex-wrap">
-      <div class="text-subtitle-2 font-weight-medium">{{ t("settings.local_lib.flatten.title") }}</div>
-      <div class="d-flex ga-2">
-        <v-btn size="small" variant="text" @click="selectAllFlatten">{{ t("settings.local_lib.select_all") }}</v-btn>
-        <v-btn size="small" variant="text" @click="clearAllFlatten">{{ t("settings.local_lib.clear_all") }}</v-btn>
-      </div>
-    </div>
-    <v-list v-if="flattenItems.length" lines="two" class="bg-transparent">
-      <v-list-item v-for="it in flattenItems" :key="`flatten-${it.arcid}`" :title="it.title || it.arcid" :subtitle="flattenSubtitle(it)">
-        <template #prepend>
-          <v-checkbox v-model="selectedFlattenArcids" :value="it.arcid" hide-details density="compact" color="primary" />
-        </template>
-      </v-list-item>
-    </v-list>
-    <div v-else class="text-medium-emphasis mb-2">{{ t("settings.local_lib.flatten.empty") }}</div>
-    <v-btn color="warning" variant="tonal" prepend-icon="mdi-folder-move-outline" :disabled="!selectedFlattenArcids.length" :loading="flattening" @click="flattenSelected">
-      {{ t("settings.local_lib.flatten.run") }}
-    </v-btn>
-  </v-card>
-
   <v-dialog v-model="reapplyDialog" persistent max-width="620">
     <v-card>
       <v-card-title class="text-h6 d-flex align-center ga-2">
@@ -492,30 +496,6 @@
           {{ t("settings.local_lib.reapply.cancel") }}
         </v-btn>
         <v-btn v-else color="primary" @click="closeReapplyDialog">{{ t("settings.unlock.confirm") }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <v-dialog v-model="refetchResultDialog" max-width="860">
-    <v-card>
-      <v-card-title class="text-h6">{{ t("settings.local_lib.refetch_result_title") }}</v-card-title>
-      <v-card-text>
-        <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-          {{ t("settings.local_lib.refetch_done", { n: Number(lastRefetchDone || 0), failed: Number(lastRefetchFailed || 0) }) }}
-        </v-alert>
-        <v-list v-if="refetchFailedRows.length" lines="two" class="bg-transparent">
-          <v-list-item
-            v-for="it in refetchFailedRows"
-            :key="`refetch-fail-${it.arcid}-${it.code || 'unknown'}`"
-            :title="`${it.arcid} · ${it.code || 'UNKNOWN'}`"
-            :subtitle="refetchFailureSubtitle(it)"
-          />
-        </v-list>
-        <div v-else class="text-medium-emphasis">{{ t("settings.local_lib.refetch_fail_empty") }}</div>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="primary" @click="refetchResultDialog = false">{{ t("settings.unlock.confirm") }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -597,13 +577,10 @@ import {
   clearTranslationTableFile,
   downloadLocalMetadataRestoreLog,
   getConfig,
-  getLocalFlattenGaps,
-  getLocalMetadataGaps,
   getTagReapplyStatus,
   getTranslationStatus,
-  refetchLocalMetadata,
   restoreLocalMetadata,
-  runLocalFlatten,
+  writebackLocalMetadata,
   startTagReapply,
   triggerLocalLibScan,
   updateConfig,
@@ -645,16 +622,8 @@ const settingsStore = useSettingsStore();
 const toast = useToastStore();
 
 const scanning = ref(false);
-const loadingGaps = ref(false);
-const loadingFlatten = ref(false);
-const refetching = ref(false);
-const flattening = ref(false);
 const clearingThumbCache = ref(false);
 const resultText = ref("");
-const gapItems = ref([]);
-const selectedArcids = ref([]);
-const flattenItems = ref([]);
-const selectedFlattenArcids = ref([]);
 const showJpnTitle = ref(false);
 const useTranslatedTags = ref(true);
 const savingDisplayPrefs = ref(false);
@@ -670,15 +639,15 @@ const translationTableFile = ref(null);
 const loadingTranslationTable = ref(false);
 const uploadingTranslationTable = ref(false);
 const translationTableResultText = ref("");
-const refetchResultDialog = ref(false);
-const lastRefetchDone = ref(0);
-const lastRefetchFailed = ref(0);
-const lastRefetchRows = ref([]);
 // State of the gallery-backup restore. `restoreDone` is what separates the
 // preview (a dry run, nothing written) from the real thing: the dialog is the
 // same, only the confirm button appears in between.
 const restoring = ref(false);
 const restoreDialog = ref(false);
+const writebackDialog = ref(false);
+const writebackBusy = ref(false);
+const writebackDone = ref(false);
+const writebackReport = ref(null);
 const restoreDone = ref(false);
 const restoreReport = ref(null);
 const downloadingRestoreLog = ref(false);
@@ -802,11 +771,6 @@ const reapplyNotes = computed(() => {
   return notes;
 });
 
-const refetchFailedRows = computed(() => {
-  const rows = Array.isArray(lastRefetchRows.value) ? lastRefetchRows.value : [];
-  return rows.filter((x) => !x?.ok);
-});
-
 function t(key, vars = {}) {
   return layoutStore.t(key, vars);
 }
@@ -840,26 +804,6 @@ const namespacePreviewLabel = computed(() => {
   const key = normalizeNamespaceKey(namespaceFormKey.value, { fallbackToOther: false });
   return key || t("settings.local_lib.namespace.preview_fallback");
 });
-
-function gapSubtitle(it) {
-  const parts = [];
-  parts.push(`tags=${Number(it?.tags_count || 0)}`);
-  parts.push(`raw=${it?.raw_empty ? "empty" : "ok"}`);
-  parts.push(String(it?.local_dir || ""));
-  return parts.join(" · ");
-}
-
-function flattenSubtitle(it) {
-  return `${String(it?.local_dir || "")} · inner=${String(it?.inner_dir || "-")}`;
-}
-
-function refetchFailureSubtitle(it) {
-  const parts = [String(it?.reason || "-")];
-  if (it?.detail) parts.push(String(it.detail));
-  if (it?.hint) parts.push(`hint=${String(it.hint)}`);
-  if (it?.trace_id) parts.push(`trace=${String(it.trace_id)}`);
-  return parts.join(" · ");
-}
 
 function namespaceLabel(key) {
   return getNamespaceDisplayLabel(key, t, customNamespaceDefs.value);
@@ -1102,22 +1046,6 @@ async function deleteCustomNamespace(row) {
   }
 }
 
-function selectAllMetadata() {
-  selectedArcids.value = gapItems.value.map((x) => x.arcid);
-}
-
-function clearAllMetadata() {
-  selectedArcids.value = [];
-}
-
-function selectAllFlatten() {
-  selectedFlattenArcids.value = flattenItems.value.map((x) => x.arcid);
-}
-
-function clearAllFlatten() {
-  selectedFlattenArcids.value = [];
-}
-
 async function scanNow() {
   scanning.value = true;
   try {
@@ -1145,34 +1073,17 @@ async function clearLocalThumbCacheNow() {
   }
 }
 
-async function loadGaps() {
-  loadingGaps.value = true;
-  try {
-    const res = await getLocalMetadataGaps({ limit: 500, offset: 0 });
-    gapItems.value = Array.isArray(res?.items) ? res.items : [];
-    selectedArcids.value = selectedArcids.value.filter((x) => gapItems.value.some((it) => it.arcid === x));
-  } catch (e) {
-    toast.warning(String(e?.response?.data?.detail || e));
-  } finally {
-    loadingGaps.value = false;
-  }
-}
-
-async function loadFlattenGaps() {
-  loadingFlatten.value = true;
-  try {
-    const res = await getLocalFlattenGaps({ limit: 2000, offset: 0 });
-    flattenItems.value = Array.isArray(res?.items) ? res.items : [];
-    selectedFlattenArcids.value = selectedFlattenArcids.value.filter((x) => flattenItems.value.some((it) => it.arcid === x));
-  } catch (e) {
-    toast.warning(String(e?.response?.data?.detail || e));
-  } finally {
-    loadingFlatten.value = false;
-  }
-}
-
+/**
+ * Re-read the display preferences from the server.
+ *
+ * This used to be "reload the two gap lists" (`缺失` + `展平`), both of which are
+ * gone: the metadata-gap report now lives only in 工具箱 -> 元数据管理器, and
+ * flattening a nested gallery is a one-time migration the scanner handles. What
+ * is left to refresh on this page is the set of display preferences, so the
+ * button reads them back instead of leaving a no-op.
+ */
 async function reloadAll() {
-  await Promise.all([loadGaps(), loadFlattenGaps()]);
+  await loadLocalDisplayPrefs();
 }
 
 function boolPref(value, fallback) {
@@ -1365,7 +1276,7 @@ async function onReapplySettled(st) {
       toast.success(msg);
     }
   }
-  // Tag filters, namespace counts and the metadata-gap list all change.
+  // The display preferences are the only server state this page mirrors.
   await reloadAll().catch(() => null);
 }
 
@@ -1476,57 +1387,6 @@ async function clearTranslationTable() {
   }
 }
 
-async function refetchSelected() {
-  if (!selectedArcids.value.length) return;
-  refetching.value = true;
-  try {
-    const payload = {
-      arcids: selectedArcids.value,
-      force: true,
-    };
-    const res = await refetchLocalMetadata(payload);
-    const done = Number(res?.done || 0);
-    const failed = Number(res?.failed || 0);
-    const rows = Array.isArray(res?.rows) ? res.rows : [];
-    const firstFailed = rows.find((x) => !x?.ok) || {};
-    lastRefetchDone.value = done;
-    lastRefetchFailed.value = failed;
-    lastRefetchRows.value = rows;
-
-    const firstFailSummary = firstFailed?.code
-      ? `${firstFailed.code}: ${firstFailed.reason || ""}${firstFailed.detail ? ` (${firstFailed.detail})` : ""}`
-      : "";
-    const msg = failed > 0
-      ? `${t("settings.local_lib.refetch_done", { n: done, failed })}${firstFailSummary ? ` · ${t("settings.local_lib.refetch_first_failed")}: ${firstFailSummary}` : ""}`
-      : t("settings.local_lib.refetch_done", { n: done, failed });
-    if (failed > 0) {
-      toast.warning(msg);
-      refetchResultDialog.value = true;
-    } else {
-      toast.success(msg);
-    }
-    await loadGaps();
-  } catch (e) {
-    toast.warning(String(e?.response?.data?.detail || e));
-  } finally {
-    refetching.value = false;
-  }
-}
-
-async function flattenSelected() {
-  if (!selectedFlattenArcids.value.length) return;
-  flattening.value = true;
-  try {
-    const res = await runLocalFlatten({ arcids: selectedFlattenArcids.value });
-    toast.success(t("settings.local_lib.flatten.done", { n: Number(res?.done || 0), failed: Number(res?.failed || 0) }));
-    await reloadAll();
-  } catch (e) {
-    toast.warning(String(e?.response?.data?.detail || e));
-  } finally {
-    flattening.value = false;
-  }
-}
-
 // Step one of the restore: ask the server what it *would* do. Same endpoint,
 // `dry_run` only. The dialog stays count-only; a real run writes the complete
 // per-gallery detail to a downloadable server-side log.
@@ -1553,11 +1413,50 @@ async function confirmRestore() {
     const restored = Number(restoreReport.value?.restored || 0);
     const matched = Number(restoreReport.value?.matched || 0);
     toast.success(t("settings.local_lib.backup.done", { restored, matched }));
+    if (restoreReport.value?.restart_scheduled) {
+      // The backend suspends the visual watcher for the restore and restarts
+      // the container to hand it back. Reloading here would race the shutdown
+      // and surface a spurious network error, so stop at the explanation.
+      toast.info(t("settings.local_lib.backup.restarting"));
+      return;
+    }
     await reloadAll();
   } catch (e) {
     toast.warning(String(e?.response?.data?.detail || e));
   } finally {
     restoring.value = false;
+  }
+}
+
+async function openWritebackDialog() {
+  writebackBusy.value = true;
+  writebackDone.value = false;
+  try {
+    writebackReport.value = await writebackLocalMetadata({ dry_run: true });
+    writebackDialog.value = true;
+  } catch (e) {
+    toast.warning(String(e?.response?.data?.detail || e));
+  } finally {
+    writebackBusy.value = false;
+  }
+}
+
+// Step two: the same call without `dry_run`. Writing to disk for every gallery is
+// not undoable, so the plan is always shown first.
+async function runWriteback() {
+  writebackBusy.value = true;
+  try {
+    writebackReport.value = await writebackLocalMetadata({ dry_run: false });
+    writebackDone.value = true;
+    toast.success(
+      t("settings.local_lib.writeback.done_short", {
+        n: Number(writebackReport.value?.comicinfo_written || 0),
+      }),
+    );
+  } catch (e) {
+    toast.warning(String(e?.response?.data?.detail || e));
+  } finally {
+    writebackBusy.value = false;
   }
 }
 

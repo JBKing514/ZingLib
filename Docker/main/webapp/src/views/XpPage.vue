@@ -53,6 +53,15 @@
             <div class="xp-chart-scroll">
               <div ref="xpChartEl" class="xp-chart-canvas" />
             </div>
+            <!-- A figure that cannot be drawn says so. Leaving an empty box next
+                 to a cluster table that renders fine is what made this look like
+                 "the clustering is broken" rather than "the chart failed". -->
+            <v-alert v-if="xpChartError" type="error" variant="tonal" class="mt-2">
+              {{ t('xp.render_failed', { reason: xpChartError }) }}
+            </v-alert>
+            <v-alert v-else-if="xpChartDegraded" type="info" variant="tonal" density="compact" class="mt-2">
+              {{ t('xp.render_degraded') }}
+            </v-alert>
           </v-card>
 
           <v-card class="pa-4 mb-4">
@@ -65,6 +74,9 @@
               <div ref="dendroChartEl" class="dendro-chart-canvas" />
             </div>
             <v-alert v-else type="info">{{ xpResult.dendrogram?.reason || t('xp.dendrogram.too_few') }}</v-alert>
+            <v-alert v-if="dendroError" type="error" variant="tonal" class="mt-2">
+              {{ t('xp.render_failed', { reason: dendroError }) }}
+            </v-alert>
           </v-card>
 
           <v-card class="pa-4">
@@ -77,11 +89,13 @@
 
 <script>
 import { computed, onBeforeUnmount, onMounted } from "vue";
+import { storeToRefs } from "pinia";
 import { useXpStore } from "../stores/xpStore";
 
 export default {
   setup() {
     const store = useXpStore();
+    const storeRefs = storeToRefs(store);
     const timeBasisItems = computed(() => {
       const base = [
         { title: store.t("xp.time_basis.read_time"), value: "read_time" },
@@ -95,7 +109,7 @@ export default {
     onBeforeUnmount(() => {
       store.clearXpTimer();
     });
-    return { ...store, timeBasisItems };
+    return { ...store, ...storeRefs, timeBasisItems };
   },
 };
 </script>

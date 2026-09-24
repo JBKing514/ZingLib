@@ -34,6 +34,17 @@ RECOVERY_ALLOWED_ENDPOINTS = {
     "/api/auth/password",
     "/api/auth/logout",
 }
+# Mutating endpoints that act only on the caller's own account or session. They
+# stay open to every authenticated role: "administrator required" is about
+# touching the library, the global config and the process, not about a user
+# renaming themselves or changing their own password.
+SELF_SERVICE_PATHS = {
+    "/api/auth/account",
+    "/api/auth/logout",
+    "/api/auth/password",
+    "/api/auth/profile",
+    "/api/auth/verify-password",
+}
 
 
 def _auth_ttl_hours(cfg: dict[str, Any] | None = None) -> int:
@@ -131,6 +142,30 @@ async def auth_guard(request: Request, call_next):
             if user_role == "recovery":
                 if p not in RECOVERY_ALLOWED_ENDPOINTS:
                     return JSONResponse(status_code=403, content={"detail": "recovery mode: limited access"})
+
+            # Every mutating route is administrator-only, except the ones that
+            # only touch the caller's own account (SELF_SERVICE_PATHS above).
+            # This used to be only documented ("Admin-only, like every mutating
+            # route" on /api/system/restart) while the guard here checked nothing
+            # but "is somebody logged in". The difference matters because three
+            # routes are destructive in ways a GET never is: /api/system/restart
+            # exits the process (a loop of it is a restart loop), the metadata
+            # restore schedules that same restart from its own `finally`, and the
+            # metadata write-back rewrites ComicInfo.xml and the sidecars on the
+            # host disk.
+            #
+            # Today this is defence in depth rather than a live hole:
+            # `register_first_admin` refuses to create a second account and the
+            # only other role, `recovery`, is already pinned to four endpoints
+            # above. But `role` is a real column and `authenticate_user` reports
+            # anything it does not recognise as 'user', so the check belongs where
+            # no future route can forget it.
+            if (
+                method in {"POST", "PUT", "PATCH", "DELETE"}
+                and user_role != "admin"
+                and p not in SELF_SERVICE_PATHS
+            ):
+                return JSONResponse(status_code=403, content={"detail": "administrator required"})
 
             csrf_cookie = str(request.cookies.get(AUTH_CSRF_COOKIE_NAME) or "")
             if method in {"POST", "PUT", "PATCH", "DELETE"}:

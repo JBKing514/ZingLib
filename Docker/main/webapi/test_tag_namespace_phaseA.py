@@ -4,7 +4,7 @@ Regression test for phase A of local tag namespaces:
 - known aliases still normalize to builtin namespaces
 - unknown namespaces are preserved instead of collapsing to other
 - hand-picked tags are stored marker-less (`ns:tag`) and mirrored into the
-  raw.user_meta.tags ledger that survives a metadata refetch / tag re-apply
+  raw.user_meta.tags ledger that survives a metadata enrich / tag re-apply
 """
 
 from __future__ import annotations

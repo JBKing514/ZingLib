@@ -3,6 +3,7 @@ import sys
 import uuid
 import time
 from datetime import datetime, timezone
+from typing import Any
 import psycopg
 
 # TestClient is a test-only extra: starlette needs httpx (or httpx2) for it, and
@@ -50,12 +51,45 @@ def test_path_length_error_suppression():
         return
 
     client = TestClient(app)
-    response = client.post("/api/local-lib/folder/mkdir", json={"parent_path": "", "name": long_path})
-    print(f"mkdir response status: {response.status_code}, body: {response.text}")
-    assert response.status_code == 400
-    payload = response.json()
-    assert "too long" in str(payload.get("detail") or "").lower()
-    assert "traceback" not in payload
+    # The route sits behind the auth middleware, so an anonymous request is
+    # answered with 401 before the validation this test is about ever runs. That
+    # is the state of any install that already has an admin; CI has none (a fresh
+    # runtime dir), so the unauthenticated request reached the guard there and the
+    # assertion only ever failed in a real container. Mint a session so the request
+    # is answered by the path-length check on both.
+    dsn = db_dsn()
+    uid = str(uuid.uuid4())
+    headers: dict[str, str] = {}
+    try:
+        if dsn:
+            with psycopg.connect(dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO ui_users (uid, username, password_hash, role, disabled, created_at) "
+                        "VALUES (%s::uuid, %s, 'hash', 'admin', false, now())",
+                        (uid, f"testuser_mkdir_{int(time.time())}"),
+                    )
+                conn.commit()
+            _invalidate_bootstrap_cache()
+            token, sess = create_session(dsn, uid, ttl_hours=2)
+            client.cookies.set(AUTH_COOKIE_NAME, token)
+            client.cookies.set(AUTH_CSRF_COOKIE_NAME, str(sess.get("csrf_token") or ""))
+            headers["x-csrf-token"] = str(sess.get("csrf_token") or "")
+        response = client.post(
+            "/api/local-lib/folder/mkdir",
+            json={"parent_path": "", "name": long_path},
+            headers=headers,
+        )
+        print(f"mkdir response status: {response.status_code}, body: {response.text}")
+        assert response.status_code == 400, (
+            f"expected the path-length guard to answer 400, got {response.status_code}: {response.text[:200]}"
+        )
+        payload = response.json()
+        assert "too long" in str(payload.get("detail") or "").lower()
+        assert "traceback" not in payload
+    finally:
+        if dsn:
+            _drop_test_user(uid)
 
 
 def _drop_test_user(uid: str) -> None:
@@ -173,8 +207,118 @@ def test_migration_timeout():
     print("--- Test 3: Migration Timeout (skipped, subject removed) ---")
 
 
+def _session_client(dsn: str, uid: str) -> tuple[Any, dict[str, str]]:
+    """TestClient + CSRF header for a throwaway account, as the guard sees it."""
+    token, sess = create_session(dsn, uid, ttl_hours=2)
+    csrf = str(sess.get("csrf_token") or "")
+    client = TestClient(app)
+    client.cookies.set(AUTH_COOKIE_NAME, token)
+    client.cookies.set(AUTH_CSRF_COOKIE_NAME, csrf)
+    return client, {"x-csrf-token": csrf}
+
+
+def test_mutating_routes_require_admin_role():
+    """The middleware gate: a logged-in non-admin cannot drive a mutating route.
+
+    Before this, `auth_guard` checked only "is somebody logged in". The three
+    routes that motivated the gate are /api/system/restart (it exits the process,
+    so a loop of it is a restart loop), /api/local-lib/restore (its `finally`
+    schedules that same restart) and /api/local-lib/metadata/writeback (it
+    rewrites ComicInfo.xml and the sidecars on the host disk).
+
+    The restart route is deliberately never called here, not even by the admin
+    client: if the gate regressed, the failure mode of this probe would be a
+    container restart in the middle of the suite. The gate is method-wide, so two
+    harmless POSTs prove the same branch.
+
+    "Non-admin" is a real row (`role='user'`), not a mock: `authenticate_user`
+    reports anything it does not recognise as 'user', and the column exists, so
+    the guard must hold for a role the UI cannot create *today*.
+    """
+    print("--- Test 4: Mutating routes require the admin role ---")
+    dsn = db_dsn()
+    if not dsn:
+        print("Skip: Database not configured")
+        return
+    if skip_without_testclient("test 4 -- admin gate probe"):
+        return
+
+    admin_uid = str(uuid.uuid4())
+    plain_uid = str(uuid.uuid4())
+    stamp = int(time.time())
+    try:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ui_users (uid, username, password_hash, role, disabled, created_at) "
+                    "VALUES (%s::uuid, %s, 'hash', 'admin', false, now()), "
+                    "(%s::uuid, %s, 'hash', 'user', false, now())",
+                    (admin_uid, f"testuser_gateadmin_{stamp}", plain_uid, f"testuser_gateplain_{stamp}"),
+                )
+            conn.commit()
+        # Without this the guard sees "not configured" and answers 503 before the
+        # session check -- which is exactly what a fresh CI checkout looks like.
+        _invalidate_bootstrap_cache()
+
+        admin, admin_headers = _session_client(dsn, admin_uid)
+        plain, plain_headers = _session_client(dsn, plain_uid)
+
+        # 1) The route the CR named, read-only in dry-run mode so a regressed gate
+        #    cannot damage anything while still failing this assertion.
+        r = plain.post("/api/local-lib/metadata/writeback", json={"dry_run": True}, headers=plain_headers)
+        print(f"plain POST metadata/writeback -> {r.status_code}")
+        assert r.status_code == 403, f"expected the admin gate to answer 403, got {r.status_code}: {r.text[:200]}"
+        assert str(r.json().get("detail") or "") == "administrator required"
+
+        # 2) Same request, same path, different role: the gate is a role check,
+        #    not "mutating routes are broken".
+        r = admin.post("/api/local-lib/metadata/writeback", json={"dry_run": True}, headers=admin_headers)
+        print(f"admin POST metadata/writeback -> {r.status_code}")
+        assert r.status_code == 200, f"admin was refused: {r.status_code}: {r.text[:200]}"
+
+        # 3) The path-length guard still answers 400 for the admin, and the gate
+        #    answers 403 for the plain user on the very same body.
+        body = {"parent_path": "", "name": "a" * 500}
+        r = plain.post("/api/local-lib/folder/mkdir", json=body, headers=plain_headers)
+        print(f"plain POST folder/mkdir -> {r.status_code}")
+        assert r.status_code == 403, f"expected 403 for a plain user, got {r.status_code}: {r.text[:200]}"
+        r = admin.post("/api/local-lib/folder/mkdir", json=body, headers=admin_headers)
+        print(f"admin POST folder/mkdir -> {r.status_code}")
+        assert r.status_code == 400, f"expected the path-length guard to answer 400, got {r.status_code}: {r.text[:200]}"
+
+        # 4) Reads are untouched: the gate is about methods, not about hiding the
+        #    library from a logged-in non-admin. `local_lib`'s list endpoints are
+        #    deliberately open to every session.
+        r = plain.get("/api/health/db")
+        print(f"plain GET health/db -> {r.status_code}")
+        assert r.status_code == 200, f"a plain session must still be able to read: {r.status_code}"
+
+        # 5) Account deletion is self-service too. The fixture deliberately has
+        #    no valid password hash, so the handler should reject the credential;
+        #    reaching that 400 proves the middleware did not reject the role first.
+        r = plain.request("DELETE", "/api/auth/account", json={"password": "wrong"}, headers=plain_headers)
+        print(f"plain DELETE auth/account -> {r.status_code}")
+        assert r.status_code == 400, (
+            f"account deletion must reach its self-service handler, got {r.status_code}: {r.text[:200]}"
+        )
+
+        # 6) Self-service stays open: renaming yourself or changing your own
+        #    password is not an administrator action. Logout is asserted
+        #    last because it revokes this client's session.
+        r = plain.post("/api/auth/logout", headers=plain_headers)
+        print(f"plain POST auth/logout -> {r.status_code}")
+        assert r.status_code == 200, (
+            f"logout must not be admin-only: {r.status_code}: {r.text[:200]}"
+        )
+        print("Success: the admin gate covers mutating routes and nothing else")
+    finally:
+        _drop_test_user(admin_uid)
+        _drop_test_user(plain_uid)
+
+
 if __name__ == "__main__":
     test_path_length_error_suppression()
     test_sliding_session_renewal()
     test_migration_timeout()
+    test_mutating_routes_require_admin_role()
     print("ALL TESTS PASSED SUCCESSFULLY!")

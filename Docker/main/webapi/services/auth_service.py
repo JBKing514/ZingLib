@@ -31,6 +31,38 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+MIN_PASSWORD_LENGTH = 8
+MIN_USERNAME_LENGTH = 3
+
+
+class _CredentialTooShort(ValueError):
+    """A credential the API can explain, instead of a developer string.
+
+    Subclasses `ValueError` so every existing `except ValueError` keeps working,
+    but carries a machine-readable `code` plus the limit, which is what lets the
+    UI answer in the user's language. The bare message used to reach the screen
+    verbatim ("password must be at least 8 characters"), which reads like an
+    internal error dump rather than a form hint.
+    """
+
+    code = "credential_too_short"
+    field = ""
+
+    def __init__(self, min_length: int) -> None:
+        self.min_length = int(min_length)
+        super().__init__(f"{self.field} must be at least {self.min_length} characters")
+
+
+class PasswordTooShortError(_CredentialTooShort):
+    code = "password_too_short"
+    field = "password"
+
+
+class UsernameTooShortError(_CredentialTooShort):
+    code = "username_too_short"
+    field = "username"
+
+
 def _invalidate_bootstrap_cache() -> None:
     with _BOOTSTRAP_CACHE_LOCK:
         _BOOTSTRAP_CACHE["ts"] = 0.0
@@ -40,8 +72,8 @@ def _invalidate_bootstrap_cache() -> None:
 
 def _hash_password(password: str, pepper: str = "", iterations: int = 310_000) -> str:
     pwd = str(password or "")
-    if len(pwd) < 8:
-        raise ValueError("password must be at least 8 characters")
+    if len(pwd) < MIN_PASSWORD_LENGTH:
+        raise PasswordTooShortError(MIN_PASSWORD_LENGTH)
     salt = secrets.token_bytes(16)
     payload = (pwd + str(pepper or "")).encode("utf-8")
     digest = hashlib.pbkdf2_hmac("sha256", payload, salt, int(iterations))
@@ -149,8 +181,8 @@ def bootstrap_status(dsn: str) -> dict[str, Any]:
 
 def register_first_admin(dsn: str, username: str, password: str, pepper: str = "") -> dict[str, Any]:
     user = str(username or "").strip()
-    if len(user) < 3:
-        raise ValueError("username must be at least 3 characters")
+    if len(user) < MIN_USERNAME_LENGTH:
+        raise UsernameTooShortError(MIN_USERNAME_LENGTH)
     status = bootstrap_status(dsn)
     if bool(status.get("configured")):
         raise PermissionError("admin has already been configured")

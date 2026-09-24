@@ -31,7 +31,13 @@
 
 前后端同源（前端构建产物由 FastAPI 托管），本地开发可以拆开跑。
 
-1. **数据库**：需要一个带 `pgvector` 的 PostgreSQL，用 `Docker/pg17_docker-compose.yml` 起库最省事。
+1. **数据库**：需要一个带 `pgvector` 的 PostgreSQL 17+。只起一个库容器最省事：
+   ```bash
+   docker run -d --name zinglib-db \
+     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zinglib_library \
+     -p 5432:5432 -v /path/to/pgvector:/var/lib/postgresql/data \
+     pgvector/pgvector:pg17
+   ```
 2. **后端 (FastAPI)**：
    ```bash
    cd Docker/main
@@ -49,7 +55,7 @@
    ```
    需要在 `vite.config.js` 里把 `/api` 代理到本地的 FastAPI 端口，保持同源。
 
-> 完整的开发环境说明、一个干净 clone 能跑什么、CI 跑什么，见 [**STARTUP.md**](STARTUP.md) 第 8 节「开发与验证」。
+> 完整的开发环境说明、一个干净 clone 能跑什么、CI 跑什么，见 [**STARTUP.md**](STARTUP.md) 第 7 节「开发与验证」。
 
 ---
 

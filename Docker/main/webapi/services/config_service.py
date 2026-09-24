@@ -15,13 +15,13 @@ from ..core.config_values import normalize_value as _normalize_value
 from ..core.constants import (
     APP_CONFIG_FILE,
     APP_CONFIG_KEY_FILE,
+    DEFAULT_POSTGRES_PASSWORD,
     LOCAL_LIB_DIR,
     CONFIG_SCOPE,
     CONFIG_SPECS,
     RUNTIME_DIR,
     TASK_LOG_DIR,
     GALLERY_CACHE_DIR,
-    THUMB_CACHE_DIR,
     THUMB_GALLARY_DIR,
     TRANSLATION_DIR,
 )
@@ -65,7 +65,6 @@ def apply_runtime_timezone() -> None:
 def ensure_dirs() -> None:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     TASK_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_GALLARY_DIR.mkdir(parents=True, exist_ok=True)
     GALLERY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     TRANSLATION_DIR.mkdir(parents=True, exist_ok=True)
@@ -216,6 +215,35 @@ def _save_db_config(dsn: str, values: dict[str, str]) -> tuple[bool, str]:
         return (True, "")
     except Exception as e:
         return (False, str(e))
+
+
+def default_credentials_in_use(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Which shipped default credentials are still in effect.
+
+    The database credentials are the only defaults this project ships: the admin
+    account is created by the user during setup, so there is no constant to compare
+    an admin password against. That is why the settings banner can be *shown*
+    truthfully only for the database side, while the admin password appears in its
+    wording as advice.
+
+    An empty stored password counts as "not changed" too -- a blank field is how a
+    database configured without a password looks, and that is not safer.
+    """
+    user = str(cfg.get("POSTGRES_USER", "") or "").strip()
+    password = str(cfg.get("POSTGRES_PASSWORD", "") or "").strip()
+    user_default = user == str(CONFIG_SPECS["POSTGRES_USER"].get("default", "")).strip()
+    password_default = password in {"", DEFAULT_POSTGRES_PASSWORD}
+    fields: list[str] = []
+    if user_default:
+        fields.append("POSTGRES_USER")
+    if password_default:
+        fields.append("POSTGRES_PASSWORD")
+    return {
+        "in_use": bool(fields),
+        "fields": fields,
+        "db_user_default": user_default,
+        "db_password_default": password_default,
+    }
 
 
 def resolve_config() -> tuple[dict[str, str], dict[str, Any]]:

@@ -112,6 +112,30 @@ export const useDashboardStore = defineStore("dashboard", () => {
     { immediate: true }
   );
 
+  // Opening the filter dialog snapshots the live filters; closing it without
+  // Apply puts them back. The minimum-rating slider filters the rows on screen
+  // as it moves (categories and tags only bite on the next fetch), so the
+  // dialog's own Cancel button would be a lie without this.
+  //
+  // The rollback lives on the close edge of this one watcher rather than in
+  // `cancelHomeFilters`, because the Cancel button is not the only way out:
+  // `v-dialog` defaults to `persistent: false`, so a backdrop click and Esc both
+  // write `homeFiltersOpen = false` straight through the v-model without
+  // touching any handler, and `closeAllOverlayPanels` closes it too. Apply is
+  // the one exit that must keep the edits, so it drops the snapshot before
+  // closing -- that is the whole "commit" signal.
+  const homeFiltersDraft = ref(null);
+  watch(homeFiltersOpen, (open) => {
+    if (open) {
+      homeFiltersDraft.value = JSON.parse(JSON.stringify(homeFilters.value || {}));
+      return;
+    }
+    if (homeFiltersDraft.value) {
+      homeFilters.value = homeFiltersDraft.value;
+      homeFiltersDraft.value = null;
+    }
+  });
+
   let _getConfig = () => ({});
   let _configRef = null;
   let _getLang = () => "zh";
@@ -150,6 +174,36 @@ export const useDashboardStore = defineStore("dashboard", () => {
       });
     }
     return out;
+  });
+
+  // True when the local feed is empty for the honest reason: this library holds
+  // no galleries at all, as opposed to "your filters matched nothing". Only the
+  // first deserves an offer to upload, and the difference is invisible from
+  // `filteredHomeItems` alone because the category/tag filters are applied by the
+  // server, not in that computed.
+  //
+  // Three ways to get this wrong, each of which claims "your library is empty"
+  // about a library that is not:
+  //   * reading `homeFilters.categories` raw. "All categories selected" is the
+  //     normal state, and `effectiveFilterCategories()` deliberately reports that
+  //     as no filter ([]) while a raw count sees several -- so the offer could
+  //     never appear at all. Deselecting every category is the mirror case: `[]`
+  //     raw, but a real filter (`["__none__"]`). Ask the helper, not the array.
+  //   * ignoring an applied search. A search writes its results into `homeLocal`
+  //     (through `activeSearchTargetState()`), so "no matches" is otherwise
+  //     indistinguishable from "no galleries".
+  //   * ignoring folder mode. An empty *nested* folder is not an empty library;
+  //     the root listing is the whole library, so only that one still counts.
+  const libraryEmptyWithoutFilters = computed(() => {
+    if (!isLocalGalleryTab()) return false;
+    if (String((lastSearchContext.value || {}).mode || "").trim()) return false;
+    if (isLocalFolderMode() && String(localFolderPath.value || "").trim()) return false;
+    if (effectiveFilterCategories().length > 0) return false;
+    const f = homeFilters.value || {};
+    if ((f.tags || []).length > 0 || Number(f.minRating || 0) > 0) return false;
+    const state = homeLocal.value || {};
+    if (state.loading || state.error) return false;
+    return !(state.items || []).length;
   });
 
   // --- presentation mode (infinite scroll vs paged) --------------------------
@@ -806,6 +860,9 @@ export const useDashboardStore = defineStore("dashboard", () => {
   }
 
   async function applyHomeFilters() {
+    // Commit: drop the snapshot first, so the watcher's close edge sees nothing
+    // to roll back and the edits survive.
+    homeFiltersDraft.value = null;
     homeFiltersOpen.value = false;
     if (String(homeSearchQuery.value || "").trim()) {
       await rerunSearchWithFilters();
@@ -1201,6 +1258,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     pinnedHomeFilterCategoryDefs,
     activeHomeState,
     filteredHomeItems,
+    libraryEmptyWithoutFilters,
     feedLastFetchedAt,
     quickFabStyle,
     t,

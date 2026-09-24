@@ -10,6 +10,23 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.0.1] - 2026-09-24
+
+- Galleries under a folder named `migrated` are scanned and listed again. The name was skipped as a legacy import graveyard that nothing in the code creates any more, so real galleries under it were neither scanned nor shown in the file manager, with nothing on screen to explain the absence.
+- Settings -> Local Library can write the database's metadata back to disk, from the backup area: `ComicInfo.xml` plus the per-gallery `.zinglib_meta` sidecar, with a preview before anything is written. For a library imported by another tool, this is what puts the metadata onto the files.
+- The metadata editor's tag suggestions also search the uploaded word list, so a library with no tags yet still gets suggestions.
+- A backup restore suspends the visual-embedding watcher and restarts the container afterwards to hand it back.
+- Model and dependency downloads can use a mainland-China mirror (DOWNLOAD_MIRROR=cn).
+- Database name and host defaults now match the compose template (zinglib_library on zinglib-db).
+- Saving settings on the setup screen no longer reports a failure while no database is connected.
+- A too-short admin password returns a localised message instead of a raw developer string.
+- The local-library setup step explains where uploading lives, and an empty home page offers it.
+- The default-credential banner only appears while the shipped database credentials are really in use.
+- Reading a gallery right after ingestion no longer claims its tags have not been recomputed against the current word list.
+- The XP map renders its panels independently, so one figure that cannot be drawn (the PCA scatter or the dendrogram) no longer leaves the others blank.
+- Four surfaces that had nothing left behind them are gone: the always-empty thumbnail-cache chip in Settings -> General, the "refetch metadata" action, the metadata-gap card (the metadata manager in the toolbox does the same job), and "flatten"/"flatten gaps".
+- Opening the settings pages no longer throws: app startup still called a settings action that this release removes.
+
 ## [1.0.0] - 2026-09-23
 
 First version carried under version-number iteration. The application had been

@@ -14,9 +14,15 @@ import {
   updateProfile,
 } from "../api";
 import { useToastStore } from "./useToastStore";
+import { getInitialLang, t as translate } from "../i18n";
+import { apiErrorMessage } from "../utils/apiErrors";
 
 export const useAppStore = defineStore("app", () => {
   const toast = useToastStore();
+  // This store has no `t` prop of its own (it is not a component), but the auth
+  // gate renders `authError` verbatim, so it needs the same translator the rest
+  // of the shell uses -- imported straight from i18n to avoid a store cycle.
+  const t = (key, vars = {}) => translate(getInitialLang(), key, vars);
 
   const showAuthGate = ref(false);
   const showSetupWizard = ref(false);
@@ -65,7 +71,7 @@ export const useAppStore = defineStore("app", () => {
     } catch (e) {
       authConfigured.value = true;
       showAuthGate.value = true;
-      authError.value = String(e?.response?.data?.detail || e);
+      authError.value = apiErrorMessage(e, t);
     } finally {
       authReady.value = true;
     }
@@ -90,7 +96,7 @@ export const useAppStore = defineStore("app", () => {
       showSetupWizard.value = true;
       if (_afterAuthOk) await _afterAuthOk();
     } catch (e) {
-      authError.value = String(e?.response?.data?.detail || e);
+      authError.value = apiErrorMessage(e, t);
     } finally {
       authSubmitting.value = false;
     }
@@ -116,7 +122,7 @@ export const useAppStore = defineStore("app", () => {
       showAuthGate.value = false;
       if (_afterAuthOk) await _afterAuthOk();
     } catch (e) {
-      authError.value = String(e?.response?.data?.detail || e);
+      authError.value = apiErrorMessage(e, t);
     } finally {
       authSubmitting.value = false;
     }
@@ -140,7 +146,12 @@ export const useAppStore = defineStore("app", () => {
       accountForm.value.username = String(authUser.value.username || "");
       toast.success(_t("auth.profile.updated"));
     } catch (e) {
-      toast.warning(String(e?.response?.data?.detail || e));
+      // Account actions answer with a structured credential error for the cases
+      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
+      // too-short password). `String(detail)` would render "[object Object]"
+      // instead of the localised hint, so route these through the same helper the
+      // login and setup paths use.
+      toast.warning(apiErrorMessage(e, t));
     }
   }
 
@@ -162,7 +173,12 @@ export const useAppStore = defineStore("app", () => {
       accountForm.value.newPassword2 = "";
       await logoutNow();
     } catch (e) {
-      toast.warning(String(e?.response?.data?.detail || e));
+      // Account actions answer with a structured credential error for the cases
+      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
+      // too-short password). `String(detail)` would render "[object Object]"
+      // instead of the localised hint, so route these through the same helper the
+      // login and setup paths use.
+      toast.warning(apiErrorMessage(e, t));
     }
   }
 
@@ -174,7 +190,12 @@ export const useAppStore = defineStore("app", () => {
       toast.success(_t("auth.profile.deleted"));
       await logoutNow();
     } catch (e) {
-      toast.warning(String(e?.response?.data?.detail || e));
+      // Account actions answer with a structured credential error for the cases
+      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
+      // too-short password). `String(detail)` would render "[object Object]"
+      // instead of the localised hint, so route these through the same helper the
+      // login and setup paths use.
+      toast.warning(apiErrorMessage(e, t));
     }
   }
 

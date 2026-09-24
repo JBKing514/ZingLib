@@ -1,3 +1,5 @@
+import os
+import sys
 import threading
 from typing import Any
 from pydantic import BaseModel
@@ -190,6 +192,38 @@ def _on_shutdown() -> None:
 @router.get("/api/visual-task/status")
 def visual_task_status() -> dict[str, Any]:
     return {"ok": True, "status": get_local_embedding_worker_status()}
+
+
+def request_process_restart(delay_s: float = 2.5) -> None:
+    """Restart by exiting: the container's restart policy brings it back.
+
+    This is the only way to reload everything -- model, workers, per-process
+    caches -- from inside the container, and it is what un-suspends the visual
+    task after a metadata restore (`stop_local_embedding_worker_until_restart`
+    is deliberately in-memory). The delay leaves room for the HTTP response and
+    the client-side message to go out before the socket closes.
+
+    Deployments must set a restart policy. `Docker/quick_deploy_docker-compose.yml`
+    carries `restart: unless-stopped`, and the manual `docker run` in STARTUP.md
+    does too; without one this exit would simply stop the container.
+    """
+
+    def _exit() -> None:
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Timer(max(0.5, float(delay_s)), _exit).start()
+
+
+@router.post("/api/system/restart")
+def restart_app() -> dict[str, Any]:
+    """Exit so the container restarts. Admin-only, like every mutating route."""
+    request_process_restart()
+    return {"ok": True, "restart_scheduled": True, "delay_s": 2.5}
 
 
 @router.post("/api/visual-task/stop")

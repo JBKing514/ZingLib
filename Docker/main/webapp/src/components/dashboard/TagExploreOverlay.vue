@@ -195,9 +195,12 @@
                 />
               </div>
 
-              <div class="d-flex justify-end ga-2 mt-3">
+              <div class="d-flex justify-space-between align-center mt-3">
                 <v-btn variant="text" @click="clearFilters">{{ t('home.filter.clear') }}</v-btn>
-                <v-btn color="primary" variant="flat" @click="applyFilters">{{ t('home.filter.apply') }}</v-btn>
+                <div class="d-flex ga-2">
+                  <v-btn variant="text" @click="filtersOpen = false">{{ t('home.filter.cancel') }}</v-btn>
+                  <v-btn color="primary" variant="flat" @click="applyFilters">{{ t('home.filter.apply') }}</v-btn>
+                </div>
               </div>
             </v-card>
           </v-dialog>

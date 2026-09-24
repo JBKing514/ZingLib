@@ -89,11 +89,13 @@
 
 <script>
 import { computed, onBeforeUnmount, onMounted } from "vue";
+import { storeToRefs } from "pinia";
 import { useXpStore } from "../stores/xpStore";
 
 export default {
   setup() {
     const store = useXpStore();
+    const storeRefs = storeToRefs(store);
     const timeBasisItems = computed(() => {
       const base = [
         { title: store.t("xp.time_basis.read_time"), value: "read_time" },
@@ -107,7 +109,7 @@ export default {
     onBeforeUnmount(() => {
       store.clearXpTimer();
     });
-    return { ...store, timeBasisItems };
+    return { ...store, ...storeRefs, timeBasisItems };
   },
 };
 </script>

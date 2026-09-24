@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard-page-shell" :class="dashboardPageShellClass">
+  <div class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick">
           <v-card class="pa-4 mb-4">
             <div class="mb-3">
               <div class="d-flex align-center ga-2">
@@ -148,8 +148,7 @@
 
           <div
             v-if="!isPlaceholderHomeTab()"
-            class="home-items-swipe-zone"
-            v-touch="{ left: onItemsSwipeLeft, right: onItemsSwipeRight }"
+            class="home-items-zone"
           >
           <v-list
             v-if="homeViewMode === 'list'"
@@ -596,9 +595,12 @@
                 </v-btn>
               </div>
 
-              <div class="d-flex justify-end ga-2 mt-3">
+              <div class="d-flex justify-space-between align-center mt-3">
                 <v-btn variant="text" @click="clearHomeFilters">{{ t('home.filter.clear') }}</v-btn>
-                <v-btn color="primary" variant="flat" @click="applyHomeFilters">{{ t('home.filter.apply') }}</v-btn>
+                <div class="d-flex ga-2">
+                  <v-btn variant="text" @click="cancelHomeFilters">{{ t('home.filter.cancel') }}</v-btn>
+                  <v-btn color="primary" variant="flat" @click="applyHomeFilters">{{ t('home.filter.apply') }}</v-btn>
+                </div>
               </div>
             </v-card>
           </v-dialog>
@@ -704,6 +706,35 @@ import {
 } from "../utils/tagNamespaces";
 import { getCategoryLabel } from "../utils/categoryPresets";
 
+// What a tap on the page is allowed to mean instead of "put the tablet preview
+// away". Galleries stay galleries, controls stay controls, and a panel that
+// captures its own clicks keeps them; everything else in the shell is the blank
+// space between them.
+const SHELL_CLICK_KEEPS_PREVIEW = [
+  ".home-card",
+  ".v-btn",
+  ".v-btn-toggle",
+  ".v-chip",
+  ".v-list-item",
+  ".v-field",
+  ".v-selection-control",
+  ".v-slider",
+  ".v-rating",
+  ".v-pagination",
+  ".v-overlay-container",
+  ".mobile-preview-fullscreen",
+  ".longpress-picker-host",
+  ".longpress-picker-backdrop",
+  ".tag-explore-host",
+  "a",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "label",
+  '[role="button"]',
+].join(", ");
+
 export default {
   name: "DashboardScopePage",
   props: {
@@ -774,7 +805,11 @@ export default {
       _longPressBodyPrevOverflow: "",
       _longPressBodyPrevTouchAction: "",
       _longPressAbortOpen: false,
-      _swipeSuppressUntil: 0,
+      // What the filter dialog looked like when it opened. The minimum-rating
+      // slider filters the rows on screen as it moves (categories and tags only
+      // bite on the next fetch), so "cancel" has to put the state back or the
+      // button would be a lie.
+      _homeFiltersDraft: null,
     };
   },
   computed: {
@@ -996,6 +1031,12 @@ export default {
         this.desktopHoverPreviewItem = null;
       }
     },
+    // The dialog can be opened from three places (the search row, the toolbar
+    // button and the shell's quick action), so the snapshot lives on the open
+    // edge rather than in whichever handler happened to fire.
+    homeFiltersOpen(next) {
+      this._homeFiltersDraft = next ? JSON.parse(JSON.stringify(this.homeFilters || {})) : null;
+    },
     showMobilePreview(next) {
       if (next) {
         this.ensureLeftTabletPreviewRailMode();
@@ -1026,6 +1067,18 @@ export default {
       if (Date.now() < Number(this._longPressSuppressClickUntil || 0)) return;
       this.openHomeItem(item);
     },
+    // In the tablet presentation the preview is a side pane and the feed behind
+    // it stays live. A tap on a gallery belongs to that gallery, a tap on a
+    // control belongs to that control, and a tap on the space between them means
+    // "put the pane away" -- until now only the card's own back arrow could.
+    onPageShellClick(event) {
+      if (!this.isTabletDrawerPreview) return;
+      if (!this.showMobilePreview) return;
+      const el = event?.target;
+      if (!el || typeof el.closest !== "function") return;
+      if (el.closest(SHELL_CLICK_KEEPS_PREVIEW)) return;
+      this.closeMobilePreview();
+    },
     homeGridColumns() {
       const w = Number(this.viewportWidth || (typeof window !== "undefined" ? window.innerWidth : 0) || 0);
       const wide = String(this.homeViewMode || "wide") === "wide";
@@ -1051,7 +1104,6 @@ export default {
       this.longPressPickerOpen = true;
       this._longPressActive = true;
       this._longPressSuppressClickUntil = Date.now() + 420;
-      this._swipeSuppressUntil = Date.now() + 900;
       this.setLongPressBodyLock(true);
     },
     closeLongPressPicker(force = false) {
@@ -1063,7 +1115,6 @@ export default {
       this.setLongPressBodyLock(false);
       if (force) {
         this._longPressSuppressClickUntil = Date.now() + 280;
-        this._swipeSuppressUntil = Date.now() + 700;
       }
       this.longPressPickerOpen = false;
       this.longPressPickerItems = [];
@@ -1078,7 +1129,6 @@ export default {
       const touch = event?.touches?.[0] || null;
       if (!touch) return;
       this.closeLongPressPicker();
-      this._swipeSuppressUntil = Date.now() + 900;
       this._longPressAbortOpen = false;
       this._longPressStartX = Number(touch.clientX || 0);
       this._longPressStartY = Number(touch.clientY || 0);
@@ -1266,44 +1316,21 @@ export default {
         this._syncingRouteTab = false;
       });
     },
+    // Dismiss the filter dialog without touching the feed: no refetch, and the
+    // live minimum-rating filter goes back to what it was.
+    cancelHomeFilters() {
+      const draft = this._homeFiltersDraft;
+      if (draft) this.homeFilters = draft;
+      this.homeFiltersOpen = false;
+    },
     onRefreshClick() {
       this.refreshCurrentHomeFeed({ force: true }).catch(() => null);
     },
-    _swipeTabsInScope() {
-      return ["local_gallery", "local_favorite", "local_history"];
-    },
-    swipeLeft() {
-      if (Date.now() < Number(this._swipeSuppressUntil || 0)) return;
-      if (!this.useRoutePreview || !this.isTouchInteraction) return;
-      if (this.showMobilePreview) return;
-      if (this.longPressPickerOpen || this._longPressActive || !!this._longPressTimer) return;
-      const tabs = this._swipeTabsInScope();
-      const idx = tabs.indexOf(String(this.homeTab || ""));
-      if (idx < 0 || idx >= tabs.length - 1) return;
-      this._recordCurrentTabScroll();
-      this.setHomeTab(tabs[idx + 1]);
-    },
-    swipeRight() {
-      if (Date.now() < Number(this._swipeSuppressUntil || 0)) return;
-      if (!this.useRoutePreview || !this.isTouchInteraction) return;
-      if (this.showMobilePreview) return;
-      if (this.longPressPickerOpen || this._longPressActive || !!this._longPressTimer) return;
-      const tabs = this._swipeTabsInScope();
-      const idx = tabs.indexOf(String(this.homeTab || ""));
-      if (idx <= 0) return;
-      this._recordCurrentTabScroll();
-      this.setHomeTab(tabs[idx - 1]);
-    },
-    onItemsSwipeLeft() {
-      if (Date.now() < Number(this._swipeSuppressUntil || 0)) return;
-      if (this.longPressPickerOpen || this._longPressActive || !!this._longPressTimer) return;
-      this.swipeLeft();
-    },
-    onItemsSwipeRight() {
-      if (Date.now() < Number(this._swipeSuppressUntil || 0)) return;
-      if (this.longPressPickerOpen || this._longPressActive || !!this._longPressTimer) return;
-      this.swipeRight();
-    },
+    // A horizontal drag on the feed belongs to the shell now (it pulls the
+    // sidebar out and pushes it back), and the library/favorites/history switch
+    // lives in the rail. Nothing in this page may claim the horizontal axis on
+    // the feed itself -- the long-press row picker is the single exception, and
+    // it only starts from on top of a card.
     // --- feed scroll memory ---------------------------------------------------
     // The feed list itself survives a tab switch and a trip to the toolbox; the
     // window offset does not, because every page shares one scroller and the
@@ -1389,12 +1416,6 @@ export default {
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       // The new page gets a fresh place, so nothing re-anchors to the old one.
       this._saveFeedScroll(this.homeTab);
-    },
-    _recordCurrentTabScroll() {
-      this._saveFeedScroll(this.homeTab);
-    },
-    _restoreScrollForTab(tabKey) {
-      this._restoreFeedScroll(tabKey);
     },
     // --- paging ---------------------------------------------------------------
     // Every pager entry point funnels through here so the "a new page means a
@@ -2148,7 +2169,7 @@ export default {
   padding-inline: 6px !important;
 }
 
-.home-items-swipe-zone {
+.home-items-zone {
   min-height: 42vh;
   touch-action: pan-y;
 }

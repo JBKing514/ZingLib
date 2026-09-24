@@ -414,9 +414,10 @@ watch(
   },
 );
 
-// The dashboard owns `homeTab` (its own swipes and the reader's restore path
-// change it), so mirror it back into the sidebar's target. Without this, coming
-// back to the local library after browsing history would land on history again.
+// The dashboard owns `homeTab` (the rail, the reader's restore path and the URL
+// all change it), so mirror it back into the sidebar's target. Without this,
+// coming back to the local library after browsing history would land on history
+// again.
 watch(
   () => dashboardStore.homeTab,
   (next) => layoutStore.setHomeTab(next),

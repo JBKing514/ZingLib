@@ -304,6 +304,7 @@
   "home.filter.smart": "智能补全",
   "home.filter.clear": "清空",
   "home.filter.apply": "应用筛选",
+  "home.filter.cancel": "取消",
   "home.filter.select_all": "全选",
   "home.filter.select_none": "全不选",
   "home.empty": "暂无结果",

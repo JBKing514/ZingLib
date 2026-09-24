@@ -58,7 +58,9 @@ export const useXpStore = defineStore("xp", () => {
 
   async function renderXpChart(options = {}) {
     const useWebgl = options.useWebgl !== false;
-    if (!xpChartEl.value) return;
+    if (!xpChartEl.value) {
+      throw new Error("XP chart container is not mounted");
+    }
     const Plotly = await ensurePlotly();
     const points = xpResult.value.points || [];
     const byCluster = new Map();
@@ -100,7 +102,9 @@ export const useXpStore = defineStore("xp", () => {
   }
 
   async function renderXpChart3D() {
-    if (!xpChartEl.value) return;
+    if (!xpChartEl.value) {
+      throw new Error("XP chart container is not mounted");
+    }
     const Plotly = await ensurePlotly();
     const points = xpResult.value.points || [];
     const ps = xpResult.value.potential_surface;
@@ -194,7 +198,10 @@ export const useXpStore = defineStore("xp", () => {
   }
 
   async function renderDendrogram() {
-    if (!dendroChartEl.value || !xpResult.value.dendrogram?.available) return;
+    if (!xpResult.value.dendrogram?.available) return;
+    if (!dendroChartEl.value) {
+      throw new Error("Dendrogram container is not mounted");
+    }
     const Plotly = await ensurePlotly();
     const fig = xpResult.value.dendrogram.figure;
     if (!fig?.data || !fig?.layout) return;

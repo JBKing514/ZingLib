@@ -65,12 +65,13 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, toRef } from "vue";
 import { useRoute } from "vue-router";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useDashboardStore } from "../stores/dashboardStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAppStore } from "../stores/appStore";
+import { useSidebarSwipe } from "../composables/useSidebarSwipe";
 import AppSidebar from "./AppSidebar.vue";
 import AppTopBar from "./AppTopBar.vue";
 
@@ -86,6 +87,18 @@ const hideReaderChrome = computed(() => {
 });
 
 const dashboardTab = computed(() => String(dashboardStore.homeTab || "local_gallery"));
+
+// The shell, not the page, owns the sidebar gesture -- so the toolbox, the XP map
+// and the settings pages all behave like the feed does. The reader hides the whole
+// chrome, and the recovery screen has no sidebar, so both opt out: there the swipe
+// would move something the user cannot see.
+const sidebarSwipeEnabled = computed(() => !appStore.isRecoveryMode && !hideReaderChrome.value);
+
+useSidebarSwipe({
+  drawer: toRef(ui, "drawer"),
+  rail: toRef(ui, "rail"),
+  enabled: sidebarSwipeEnabled,
+});
 
 function onSidebarGoTab(key) {
   ui.goTab(key);

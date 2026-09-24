@@ -11,6 +11,7 @@
  * These tests pin the orchestration: every attempt is made, the failure is
  * reported rather than thrown, and the degradation ladder is walked in order.
  */
+import fs from "node:fs";
 import { errorText, renderFirstAvailable } from "./src/utils/xpRenderPlan.js";
 
 function assertTrue(condition, message) {
@@ -98,6 +99,20 @@ async function main() {
     const result = await renderFirstAvailable([]);
     assertTrue(!result.ok, "expected not ok");
     assertEqual(result.error, "", "no attempt means no error text");
+  });
+
+  await check("the page keeps template element refs connected to the Pinia store", async () => {
+    const source = fs.readFileSync(new URL("./src/views/XpPage.vue", import.meta.url), "utf8");
+    assertTrue(source.includes('import { storeToRefs } from "pinia"'), "XpPage must import storeToRefs");
+    assertTrue(source.includes("const storeRefs = storeToRefs(store)"), "XpPage must preserve store refs");
+    assertTrue(
+      source.includes("return { ...store, ...storeRefs, timeBasisItems }"),
+      "store refs must override the unwrapped values produced by spreading the store",
+    );
+    assertTrue(
+      !source.includes("return { ...store, timeBasisItems }"),
+      "spreading the store alone disconnects xpChartEl and dendroChartEl from the renderer",
+    );
   });
 
   console.log(`\nSUMMARY ${pass} passed`);

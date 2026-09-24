@@ -308,6 +308,7 @@
   "home.filter.smart": "Smart Completion",
   "home.filter.clear": "Clear",
   "home.filter.apply": "Apply Filters",
+  "home.filter.cancel": "Cancel",
   "home.filter.select_all": "Select All",
   "home.filter.select_none": "Select None",
   "home.empty": "No results",

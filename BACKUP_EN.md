@@ -55,7 +55,7 @@ Contents (`schema: "zinglib.metadata.v1"`):
 ```bash
 # Run where the database is reachable; replace the <…> placeholders.
 pg_dump -Fc -f zinglib-$(date +%F).dump \
-  "postgresql://postgres:<password>@<db-host>:5432/lrr_library"
+  "postgresql://postgres:<password>@<db-host>:5432/zinglib_library"
 ```
 
 * Do **not** run `[Vectorize]` or "rebuild database" while dumping — you would capture a half-written state.
@@ -109,7 +109,7 @@ finish.
 ### Scenario C — restore the database itself (#2)
 
 ```bash
-pg_restore -d "postgresql://postgres:<password>@<db-host>:5432/lrr_library" --clean --if-exists zinglib-2026-09-23.dump
+pg_restore -d "postgresql://postgres:<password>@<db-host>:5432/zinglib_library" --clean --if-exists zinglib-2026-09-23.dump
 ```
 
 Start the app afterwards (it re-checks migrations on boot). **This is the path that covers settings

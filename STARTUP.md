@@ -11,80 +11,98 @@ ZingLib 是一个**本地优先**的私人漫画 / 插画库管理应用：它�
 * **OpenAI 兼容后端（可选）**：支持 `/v1` 接口（LM Studio / vLLM / Ollama 等），用于驱动多模态描述生成和文本增强检索。
 * **说明**：LLM 连接是可选项；未配置时系统仍可运行基于 SigLIP 的视觉检索、聚类推荐及基础的数据链路。
 
-## 1. 基础步骤
+## 1. 部署
 
 镜像已公开在 Docker Hub（`jbking114514/zinglib`），同时提供 `linux/amd64` 与 `linux/arm64`（NAS / 树莓派 / Mac 都能直接用）。
-**推荐直接拉镜像**；从源码构建见 1.3，只在你打算改代码、要自建镜像或需要镜像未覆盖的架构时才走那条。
 
-### 1.1 拉取并启动（推荐）
+**部署方式按推荐程度排序：1.1 一键 compose（推荐）→ 1.2 手动单独拉起（自己给 docker 命令）→ 1.3 从源码构建（备选）。**
 
-不需要克隆仓库：
+### 1.1 一键部署：唯一的 compose 脚本（推荐）
 
-```bash
-docker run -d --name zinglib \
-  -p 8501:8501 \
-  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-  -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:latest data-ui
-```
-
-* `<db-host>` 是运行 PostgreSQL 的地址（同机 Docker Desktop 用 `host.docker.internal`）。
-* `latest` 可换成固定版本 `1.0.0`，另有 `1.0` / `1` / `sha-<commit>`。
-* `/path/to/runtime` 是宿主机数据目录：模型权重、本地库、缩略图、每画廊备份 `.zinglib_meta/` 与迁移日志都在这里，**记得备份**。
-
-### 1.2 用编排模板拉起（应用 + 数据库）
+`Docker/` 下**只有一个 compose 文件**，它会把数据库和应用一起拉起来。⚠️ **不要试图只起应用容器** ——
+没有数据库连界面都进不去，这也是为什么不再提供"只起应用"的模板。
 
 ```bash
 git clone https://github.com/JBKing514/ZingLib.git && cd ZingLib
 docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 ```
 
-该模板拉起两个服务：`pg17`（PostgreSQL + pgvector）与 `data-ui`（应用本体）。`data-ui` 默认就用上面那个公开镜像，
-可用环境变量 `ZINGLIB_IMAGE` 覆盖；数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径相对 compose 文件解析，不是相对当前目录），
-可用 `POSTGRES_DATA_DIR`（数据库）与 `YOUR_LOCAL_PATH`（应用 runtime）覆盖 —— 想把它们挪到仓库根目录的 `zinglib/`，把这两个变量指过去即可。
+它会拉起两个容器：
 
-所有后端 API、定时任务与 WebUI 都已经统一收束进应用容器中。
+| 容器名 | 作用 | 对外端口 |
+|---|---|---|
+| `zinglib-db` | PostgreSQL 17 + `pgvector` | 5432 |
+| `zinglib` | ZingLib 本体（公开镜像） | 8501 |
+
+* 应用默认用公开镜像 `jbking114514/zinglib:latest`；要用自己构建的，加 `ZINGLIB_IMAGE=zinglib:local`。
+* 数据库默认 **`zinglib_library`**，用户 `postgres`，密码 `postgres`；可用 `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` 覆盖。
+* 数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径是相对 **compose 文件**解析的，不是相对当前目录）：
+  数据库在 `Docker/zinglib/pgvector/`，应用 runtime 在 `Docker/zinglib/runtime/`。
+  想把它们挪到别处（比如仓库根的 `zinglib/`），用 `POSTGRES_DATA_DIR` 与 `YOUR_LOCAL_PATH` 指过去即可。
+
+所有后端 API、定时任务与 WebUI 都收束在应用容器里。
+
+> **Setup Wizard 里数据库那一栏填**：主机 `zinglib-db`、端口 `5432`、用户 `postgres`、密码 `postgres`、数据库 `zinglib_library`。
+> 应用与数据库在同一个 compose 网络里，`zinglib-db`（容器名）与 `pg17`（服务名）都能解析。
+> ⚠️ 数据库名要填 **`zinglib_library`** —— 应用代码里的内置默认库名是 `lrr_library`，别照抄预填值。
+
+### 1.2 手动单独拉起（自己给 docker 命令）
+
+想自己控制每一步、或者复用你已有的 PostgreSQL 时走这条。要点：**两个容器必须在同一个自建网络里**，
+否则应用解析不到数据库（跨机部署除外）。
+
+```bash
+# 1) 专用网络
+docker network create zinglib-net
+
+# 2) 数据库（PostgreSQL 17 + pgvector）
+docker run -d --name zinglib-db --network zinglib-net \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=zinglib_library \
+  -p 5432:5432 \
+  -v /path/to/pgvector:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17
+
+# 3) 应用
+docker run -d --name zinglib --network zinglib-net \
+  -p 8501:8501 \
+  -v /path/to/runtime:/app/runtime \
+  jbking114514/zinglib:latest data-ui
+```
+
+* Setup Wizard 里数据库主机填 **`zinglib-db`**（同一自建网络内按容器名解析）。
+* **跨机 / 用外部数据库**：去掉 `--network`，改用环境变量直接把 DSN 交给应用，
+  向导里就不用再填连接信息了：
+  ```bash
+  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/zinglib_library?sslmode=disable'
+  ```
+* 两处数据目录（`/path/to/pgvector` 与 `/path/to/runtime`）都要备份；`runtime/` 里是模型权重、本地库、
+  缩略图与每画廊备份 `.zinglib_meta/`。
 
 ### 1.3 从源码构建（备选）
 
 ```bash
 cd Docker/main
 docker build -t zinglib:local .
-docker run -d --name zinglib \
-  -p 8501:8501 \
-  -e POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/<db>?sslmode=disable' \
-  -v /path/to/runtime:/app/runtime \
-  zinglib:local data-ui
 ```
 
-需要自己构建的典型情形：要改代码、要换基础镜像或依赖版本、或需要公开镜像未覆盖的 CPU 架构。
-构建出的镜像同样可以用 `ZINGLIB_IMAGE=zinglib:local` 喂给 1.2 的编排模板。
+然后把镜像喂给 1.1 的 compose：
 
-### 1.4 访问 WebUI
+```bash
+ZINGLIB_IMAGE=zinglib:local docker compose -f Docker/quick_deploy_docker-compose.yml up -d
+```
+
+或者按 1.2 的 `docker run` 自己起（把镜像名换成 `zinglib:local`）。
+
+需要自己构建的典型情形：要改代码、要换基础镜像或依赖版本、或需要公开镜像未覆盖的 CPU 架构。
+
+### 1.4 访问 WebUI 与 Setup Wizard
 
 * 浏览器打开 `http://<host>:8501`。
 * **首次进入时，系统将引导您进入 Setup Wizard（初始化向导）**：在 Web 界面中完成数据库连接、建立首个管理员账号即可，**无需手动修改任何 `.env` 文件**。
 
-## 2. 手动分步部署（可选）
-
-适用于想逐个拉起容器或跨机部署的场景：
-
-1. PostgreSQL（需带有 `pgvector` 扩展）
-   ```bash
-   docker compose -f Docker/pg17_docker-compose.yml up -d
-   ```
-
-2. ZingLib（核心服务）
-   ```bash
-   POSTGRES_DSN='postgresql://postgres:postgres@<db-host>:5432/lrr_library?sslmode=disable' \
-     docker compose -f Docker/main_docker-compose.yml up -d
-   ```
-
-   * 🔴 **`POSTGRES_DSN` 必须指向第 1 步那个库**（同机 Docker Desktop 用 `host.docker.internal`）。模板里的默认值是带 `<db-host>` 的**占位串**，不覆盖就连不上数据库。
-   * 镜像默认用公开镜像；要用自己构建的，加 `ZINGLIB_IMAGE=zinglib:local`。
-   * runtime 默认落在 compose 文件同级的 `Docker/zinglib/runtime/`，可用 `YOUR_LOCAL_PATH` 覆盖。
-
-## 3. 首次初始化与数据入库
+## 2. 首次初始化与数据入库
 
 完成 Setup Wizard 后，把已有的漫画目录放到宿主机的 `runtime/local_lib/` 下（容器内为 `/app/runtime/local_lib`），然后在 `Control`（控制台）页面依次执行：
 
@@ -94,7 +112,7 @@ docker run -d --name zinglib \
 
 > 日常维护推荐使用系统内置的 **Schedule（定时任务）** 页面配置自动入库，对新增目录做增量处理。
 
-## 4. 模型连接策略（可选）
+## 3. 模型连接策略（可选）
 
 **不配置任何模型也能用**：浏览、阅读、文件管理、`ComicInfo`、SigLIP 视觉向量与「找相似」全部在本地完成 ——
 内置 SigLIP 由应用容器自己下载并加载（零配置自动下载，可随时清理释放内存），不需要任何外部端点。
@@ -111,12 +129,12 @@ docker run -d --name zinglib \
 * **小坑**：如果端点上是支持「思考 / 推理」的模型（如 DeepSeek-R1），请在 LM Studio 的 **Developer Settings** 里
   **关闭** "Separate reasoning_content and content in API responses"，或直接用 Instruct / Chat 模型 —— 否则可能返回空描述。
 
-## 5. 运行建议
+## 4. 运行建议
 
 * 系统默认使用 CPU 运行 SigLIP 模型，因此首轮全量入库（几十上万本）耗时可能会较长，但日常增量入库毫无压力。
 * 考虑到引入 ROCm、CUDA 等图形加速依赖带来的复杂性，暂不提供 GPU 加速；如需自行尝试，可通过修改 `Docker/main/requirements.txt` 与环境变量强制启用，相关配置不提供技术支持。
 
-## 6. Sudo 提权与灾难恢复
+## 5. Sudo 提权与灾难恢复
 
 考虑到配置统一由数据库管理，本系统设计了完善的容灾机制：
 
@@ -126,7 +144,7 @@ docker run -d --name zinglib \
   * 若因数据库迁徙导致配置丢失，可在此处**上传恢复**。
 * **急救码 (Recovery Codes)**：系统在初始化 / 重置时会生成并在日志中打印 10 个用后即焚的恢复密钥（SHA256 保存）。当您忘记密码或不慎修改错了数据库 IP 导致无法登录时，可在登录页面使用任意一条急救码进入“恢复模式（Recovery Mode）”以强制纠正配置并重置管理员密码。
 
-## 7. 网络配置建议
+## 6. 网络配置建议
 
 ZingLib 运行时**不会**主动访问外部站点。只有在以下场景才可能需要代理：
 
@@ -144,9 +162,9 @@ no_proxy=localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12 # 局域网
 
 > 请确保 `no_proxy` 中包含数据库主机，否则容器内应用访问数据库会被代理拦截。
 
-## 8. 开发与验证
+## 7. 开发与验证
 
-### 8.1 一个干净 clone 能跑什么
+### 7.1 一个干净 clone 能跑什么
 
 下面这些**都在仓库里**，不需要容器、也不需要任何专用主机：
 
@@ -167,7 +185,7 @@ cd Docker/main/webapp && npm ci && npm run build && node --test test_*.mjs
 ⚠️ 仓库的 `.gitignore` 刻意排除了 `/tools/` 与 `AGENTS.md`：**工作区级的守卫脚本、变异测试、容器探针、部署脚本都不随 clone 分发**。
 所以"这个仓库有哪些守卫"的答案就是**上面 `scripts/` 里的三个**，别把不在仓库里的脚本说成项目的守卫。
 
-### 8.2 CI 跑什么
+### 7.2 CI 跑什么
 
 `.github/workflows/ci.yml` 在每次 push / PR 上跑三个 job，和 8.1 的三条一一对应：
 
@@ -179,7 +197,7 @@ cd Docker/main/webapp && npm ci && npm run build && node --test test_*.mjs
 
 三者全绿之后，CI 才在打 `v*` 标签时把多架构镜像发布到 Docker Hub —— 而且要求**标签与应用版本严格一致**，敲错版本号的标签不会被发布。
 
-### 8.3 本项目的部署验证环境
+### 7.3 本项目的部署验证环境
 
 本项目**唯一**的部署与集成回归环境是一台专用 Linux 主机（Ubuntu）：
 
@@ -191,13 +209,13 @@ ssh <user>@<dev-host>
 * 改动前先查看远端容器、端口与挂载；测试数据保持隔离。
 * 🔴 **构建成功、进程活着、日志为空都不等于回归通过**：构建、单元测试、运行时 API、视觉这四类结果要**分开**报告。
 
-## 9. 故障排查
+## 8. 故障排查
 
 * 如果下载 SigLIP 模型或安装依赖时遇到网络问题，请自行通过镜像源或代理获取模型权重，放到 `runtime/models/` 下即可（`runtime/` 里只放模型权重与 Python 依赖，不含任何库数据）。**本项目不附带、也不背书任何第三方整合包**：从非官方来源取得的文件，请自行核对来源与校验值。
 * 若容器启动后无法访问 WebUI，先用 `docker logs <容器名>` 查看启动日志；常见原因是 `POSTGRES_DSN` 指向的数据库未就绪或 `pgvector` 扩展未启用。
 * 数据目录挂在宿主机（默认 `./zinglib/`），重建容器不会丢失配置与库记录。
 
-## 10. 备份与恢复
+## 9. 备份与恢复
 
 **唯一要记住的一句：`.zinglib_meta/` 里是算力产物（SigLIP 向量 + 阅读历史 + 手改的元数据），
 它不覆盖你的漫画文件、也不覆盖设置与账号。**

@@ -53,7 +53,7 @@ ZingLib 的数据分散在三处，**它们不是同一份东西，缺一不可*
 ```bash
 # 在能连到数据库的机器上执行；<...> 换成你的值
 pg_dump -Fc -f zinglib-$(date +%F).dump \
-  "postgresql://postgres:<password>@<db-host>:5432/lrr_library"
+  "postgresql://postgres:<password>@<db-host>:5432/zinglib_library"
 ```
 
 * 备份/恢复期间**不要**运行 `[向量化入库]` 或"重建数据库"，否则拿到的是半截状态。
@@ -102,7 +102,7 @@ ZingLib 先**按 `local_dir`（库内相对路径）匹配**，匹配不到才�
 ### 场景 C · 恢复数据库本身（第 2 项）
 
 ```bash
-pg_restore -d "postgresql://postgres:<password>@<db-host>:5432/lrr_library" --clean --if-exists zinglib-2026-09-23.dump
+pg_restore -d "postgresql://postgres:<password>@<db-host>:5432/zinglib_library" --clean --if-exists zinglib-2026-09-23.dump
 ```
 
 恢复完再启动应用（启动时会跑一次迁移检查）。**这条路径覆盖设置与账号**，是 sidecar 覆盖不到的那部分。

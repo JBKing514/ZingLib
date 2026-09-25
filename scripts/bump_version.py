@@ -148,7 +148,7 @@ def write_package_version(path: Path, new_version: str) -> str:
         raise BumpError(f'no "version" field in {path}')
     old = pattern.search(text).group(2)
     updated = pattern.sub(lambda m: f"{m.group(1)}{new_version}{m.group(3)}", text, count=1)
-    path.write_text(updated, encoding="utf-8")
+    path.write_bytes(updated.encode("utf-8"))
     return old
 
 
@@ -176,7 +176,7 @@ def write_lockfile_version(path: Path, new_version: str) -> str:
         parts.append(f"{m.group(1)}{new_version}{m.group(3)}")
         cursor = m.end()
     parts.append(text[cursor:])
-    path.write_text("".join(parts), encoding="utf-8")
+    path.write_bytes("".join(parts).encode("utf-8"))
     return old
 
 
@@ -188,7 +188,7 @@ def write_version_json(path: Path, version: str, channel: str, when: datetime) -
         "published_at": when.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_bytes((json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     return payload
 
 
@@ -201,16 +201,16 @@ def insert_changelog_section(path: Path, version: str, when: datetime, notes: li
     ) + "\n\n"
 
     if not path.is_file():
-        path.write_text(CHANGELOG_PREAMBLE + "\n" + section, encoding="utf-8")
+        path.write_bytes((CHANGELOG_PREAMBLE + "\n" + section).encode("utf-8"))
         return True
 
     text = path.read_text(encoding="utf-8")
     heading = re.search(r"^## \[", text, re.MULTILINE)
     if heading is None:
-        path.write_text(text.rstrip("\n") + "\n\n" + section, encoding="utf-8")
+        path.write_bytes((text.rstrip("\n") + "\n\n" + section).encode("utf-8"))
         return True
     updated = text[: heading.start()] + section + text[heading.start() :]
-    path.write_text(updated, encoding="utf-8")
+    path.write_bytes(updated.encode("utf-8"))
     return True
 
 

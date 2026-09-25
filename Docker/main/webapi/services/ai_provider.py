@@ -6,20 +6,6 @@ from urllib.parse import urlparse
 import requests
 
 
-def check_http(url: str, timeout: int = 4) -> tuple[bool, str]:
-    if not url:
-        return (False, "empty url")
-    candidate = str(url).strip()
-    parsed = urlparse(candidate)
-    if not parsed.scheme:
-        candidate = f"http://{candidate}"
-    try:
-        r = requests.get(candidate, timeout=timeout)
-        return (r.ok, f"HTTP {r.status_code}")
-    except Exception as e:
-        return (False, str(e))
-
-
 def _provider_v1_base(base_url: str) -> str:
     base = str(base_url or "").strip().rstrip("/")
     if not base:

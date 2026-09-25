@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { pageForWheelDrag } from "./src/utils/readerWheelDrag.js";
+import { WHEEL_DRAG_THRESHOLD_PX, pageForWheelDrag } from "./src/utils/readerWheelDrag.js";
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -21,6 +21,48 @@ test("reader wheel captures one pointer and uses absolute drag state", () => {
   assert.match(wheel, /pageForWheelDrag\(\{/);
   assert.doesNotMatch(wheel, /touchAnchor|onWheelTouchMove/);
   assert.match(wheel, /touch-action: none/);
+});
+
+test("a wheel tap is not captured, so a mouse click still reaches the thumbnail", () => {
+  const wheel = read("./src/components/reader/ReaderNavWheel.vue");
+  const drag = read("./src/utils/readerWheelDrag.js");
+
+  // Capturing on `pointerdown` retargets the following `pointerup`, and the
+  // browser derives the `click` target from that -- the thumbnail's own handler
+  // then never fires and a mouse click on the strip does nothing. Capture has to
+  // wait for real travel.
+  const down = wheel.slice(
+    wheel.indexOf("function onWheelPointerDown"),
+    wheel.indexOf("function onWheelPointerMove"),
+  );
+  assert.ok(down.length > 0, "pointerdown handler must exist");
+  assert.doesNotMatch(
+    down,
+    /setPointerCapture/,
+    "pointerdown must not capture: it would swallow the click",
+  );
+
+  // And the move handler must gate the capture behind the drag threshold.
+  const move = wheel.slice(
+    wheel.indexOf("function onWheelPointerMove"),
+    wheel.indexOf("function onWheelPointerEnd"),
+  );
+  assert.match(move, /WHEEL_DRAG_THRESHOLD_PX/);
+  assert.match(move, /if \(travel < WHEEL_DRAG_THRESHOLD_PX\) return;/);
+  assert.match(move, /setPointerCapture/);
+  assert.ok(
+    move.indexOf("WHEEL_DRAG_THRESHOLD_PX") < move.indexOf("setPointerCapture"),
+    "the threshold must be checked before capturing",
+  );
+
+  // The threshold constant has to be a small, non-zero distance.
+  const declared = Number(/WHEEL_DRAG_THRESHOLD_PX\s*=\s*(\d+)/.exec(drag)?.[1] || 0);
+  assert.ok(declared > 0 && declared <= 12, `threshold must be a small tap tolerance, got ${declared}`);
+
+  // A tap must not also be dragged: the click handler has to exist and consume
+  // the post-drag click.
+  assert.match(wheel, /@click="onThumbClick\(entry, \$event\)"/);
+  assert.match(wheel, /if \(draggedThisGesture\)/);
 });
 
 test("page zoom scales the application surface instead of the root font", () => {

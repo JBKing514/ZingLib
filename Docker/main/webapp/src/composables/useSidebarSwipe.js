@@ -50,6 +50,12 @@ const BLOCKED_SELECTOR = [
  */
 export function resolveSidebarSwipe(input = {}) {
   if (!input.enabled || input.blocked) return "";
+  // The dashboard's long-press row picker owns the pointer for as long as it is
+  // on screen: it is scrubbed by the same horizontal drag the shell would read as
+  // "pull the sidebar out". Its backdrop only covers the page *after* the picker
+  // opens, so the drag that opened it -- and every drag on it -- would otherwise
+  // be stolen mid-gesture. One flag, checked before any distance rule.
+  if (input.longPressActive) return "";
   const dx = Number(input.dx || 0);
   const dy = Number(input.dy || 0);
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return "";
@@ -79,9 +85,11 @@ function closestOf(target, selector) {
 /**
  * Wire the gesture to the window. `drawer` and `rail` are refs onto the layout
  * store; `enabled` says whether the shell is even mounted (the reader and the
- * recovery screen render no sidebar, so the gesture has nothing to move).
+ * recovery screen render no sidebar, so the gesture has nothing to move);
+ * `longPressActive` is a ref that a page raises while one of its own
+ * long-press pickers owns the pointer.
  */
-export function useSidebarSwipe({ drawer, rail, enabled }) {
+export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
   let tracking = false;
   let pointerId = -1;
   let startX = 0;
@@ -99,6 +107,7 @@ export function useSidebarSwipe({ drawer, rail, enabled }) {
   function onPointerDown(event) {
     tracking = false;
     if (!canTrack()) return;
+    if (longPressActive && longPressActive.value) return;
     if (event?.isPrimary === false || !["touch", "pen"].includes(String(event?.pointerType || ""))) return;
     const target = event?.target || null;
     if (closestOf(target, BLOCKED_SELECTOR)) return;
@@ -122,6 +131,7 @@ export function useSidebarSwipe({ drawer, rail, enabled }) {
     const action = resolveSidebarSwipe({
       enabled: true,
       blocked: false,
+      longPressActive: !!(longPressActive && longPressActive.value),
       dx: Number(event?.clientX || 0) - startX,
       dy: Number(event?.clientY || 0) - startY,
       startX,

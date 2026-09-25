@@ -38,6 +38,7 @@ so every public entry point is best-effort and swallows its own errors.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -61,6 +62,114 @@ TEXT_DIM = 1024
 # A gallery read a thousand times is not a gallery whose history we need in
 # full; the cap only bounds the file size.
 MAX_HISTORY_ROWS = 1000
+
+# --- the cover fingerprint --------------------------------------------------
+# An arcid is a hash of the gallery's *path*, so moving the folder invalidates
+# every id we hold -- and moving it also breaks the relative-path match. What
+# does not change when a folder moves is its content, so the sidecar carries a
+# small fingerprint of page 1 (the cover) as a third way to find its gallery.
+#
+# The header is enough: the first 8 KiB identifies a real image and costs one
+# short read per gallery. Hashing the whole cover would mean reading a few
+# hundred KB per gallery every time a sidecar is written -- the embedding run and
+# the metadata writeback both do this for the entire library.
+COVER_HASH_READ_BYTES = 8192
+# Which bytes of a large cover to sample, on top of the header. A JPEG's first
+# 8 KiB is mostly its header, and two covers edited from the same template could
+# share one; the tail keeps the fingerprint honest without a full read.
+COVER_HASH_TAIL_BYTES = 4096
+
+
+def _hash_reader(reader: Any) -> str:
+    """Hash an opened binary stream's fingerprint (header + head/tail sample)."""
+    try:
+        head = reader.read(COVER_HASH_READ_BYTES) or b""
+    except Exception:
+        return ""
+    if not head:
+        return ""
+    payload = bytearray(head)
+    # `seek` needs a real position, so read the tail as "everything after the
+    # header" -- for a small cover this is empty, which is fine and keeps the
+    # fingerprint a pure function of the file.
+    try:
+        reader.seek(0, os.SEEK_END)
+        size = int(reader.tell() or 0)
+        start = max(0, size - COVER_HASH_TAIL_BYTES)
+        if start > len(head):
+            reader.seek(start, os.SEEK_SET)
+            payload.extend(reader.read(COVER_HASH_TAIL_BYTES) or b"")
+    except Exception:
+        pass
+    return hashlib.sha1(bytes(payload)).hexdigest()
+
+
+def gallery_cover_hash(local_dir: str, *, meta: dict[str, Any] | None = None) -> str:
+    """Fingerprint page 1 of a gallery. Never raises. ``""`` when unavailable.
+
+    ``meta`` is the optional sidecar directory override. It exists for the same
+    reason ``sidecar_path`` takes one: the test suite redirects the sidecar
+    directory to a temp dir, and library lookups have to honour that instead of
+    reaching into the user's real ``.zinglib_meta``.
+    """
+    rel = normalize_rel_path(local_dir)
+    if not rel:
+        return ""
+    try:
+        base = LOCAL_LIB_DIR / rel
+    except Exception:
+        return ""
+    try:
+        if not base.exists():
+            return ""
+    except OSError:
+        return ""
+    try:
+        if base.is_file() and base.suffix.lower() in {".zip", ".cbz"}:
+            import zipfile
+
+            with zipfile.ZipFile(base, "r") as zf:
+                names = [n for n in zf.namelist() if n.endswith("/") is False and "__MACOSX" not in n]
+                # The manifest the reader uses is naturally sorted, matching how
+                # page 1 is chosen everywhere else.
+                candidates = [
+                    n for n in names
+                    if Path(n).suffix.lower().lstrip(".") in _COVER_IMAGE_EXTS
+                ]
+                if not candidates:
+                    return ""
+                chosen = sorted(candidates, key=_cover_natural_key)[0]
+                with zf.open(chosen) as handle:
+                    return _hash_reader(handle)
+        if base.is_dir():
+            files: list[Path] = []
+            for p in base.rglob("*"):
+                try:
+                    if p.is_file() and p.suffix.lower().lstrip(".") in _COVER_IMAGE_EXTS:
+                        files.append(p)
+                except OSError:
+                    continue
+            if not files:
+                return ""
+            files.sort(key=lambda x: _cover_natural_key(x.relative_to(base).as_posix()))
+            with files[0].open("rb") as handle:
+                return _hash_reader(handle)
+    except Exception:
+        return ""
+    return ""
+
+
+# Kept local so this module does not import the scanner's constants just for a
+# suffix test; they are the same set the library accepts as pages.
+_COVER_IMAGE_EXTS = frozenset({"jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"})
+
+
+def _cover_natural_key(name: str) -> tuple:
+    """Sort key for page order. Splits digits so page 10 follows page 9."""
+    import re as _re
+
+    parts = _re.split(r"(\d+)", str(name or "").lower())
+    return tuple(int(p) if p.isdigit() else p for p in parts)
 
 # --- the restore report -----------------------------------------------------
 # The report is read by a human in a support thread as often as by a machine, so
@@ -106,8 +215,20 @@ def sidecar_filename(arcid: str) -> str:
     return f"{str(arcid or '').strip()}{SIDECAR_SUFFIX}"
 
 
-def sidecar_path(arcid: str) -> Path:
-    return meta_dir() / sidecar_filename(arcid)
+def sidecar_path(arcid: str, *, meta: dict[str, Any] | None = None) -> Path:
+    """Absolute path of one gallery's sidecar.
+
+    ``meta`` is an optional override dict carrying ``meta_dir`` -- the test
+    suite's way of redirecting the directory without patching the module
+    attribute (which every live reference would then bypass).
+    """
+    return _resolve_meta_dir(meta) / sidecar_filename(arcid)
+
+
+def _resolve_meta_dir(meta: dict[str, Any] | None) -> Path:
+    if isinstance(meta, dict) and isinstance(meta.get("meta_dir"), Path):
+        return meta["meta_dir"]
+    return meta_dir()
 
 
 def normalize_rel_path(local_dir: str) -> str:
@@ -208,6 +329,66 @@ def _floats(value: Any) -> list[float]:
 
 # --- write ------------------------------------------------------------------
 
+# A full-library writeback or embedding run calls `build_payload` once per
+# gallery, and each of those would otherwise re-read the first bytes of a cover
+# that has not changed. Keyed on the file signature (size + mtime), so an edited
+# gallery is re-fingerprinted and a moved one is not.
+_cover_hash_cache: dict[str, tuple[tuple[int, int], str]] = {}
+_COVER_HASH_CACHE_MAX = 4096
+
+
+def _cover_signature(path: Path) -> tuple[int, int]:
+    try:
+        st = path.stat()
+        return int(st.st_size), int(st.st_mtime_ns)
+    except Exception:
+        return 0, 0
+
+
+def _cover_hash_cached(local_dir: str) -> str:
+    """`gallery_cover_hash` with a signature-keyed memo. Never raises."""
+    rel = normalize_rel_path(local_dir)
+    if not rel:
+        return ""
+    try:
+        base = LOCAL_LIB_DIR / rel
+        signature = _cover_signature(base)
+    except Exception:
+        return ""
+    hit = _cover_hash_cache.get(rel)
+    if isinstance(hit, tuple) and len(hit) == 2 and hit[0] == signature:
+        return str(hit[1] or "")
+    value = gallery_cover_hash(local_dir)
+    if len(_cover_hash_cache) >= _COVER_HASH_CACHE_MAX:
+        _cover_hash_cache.clear()
+    _cover_hash_cache[rel] = (signature, value)
+    return value
+
+
+def invalidate_cover_hash_cache(local_dir: str = "") -> None:
+    """Drop the memo for one gallery, or all of it when ``local_dir`` is "".
+
+    Every path that rewrites the files in a gallery has to call this, for the
+    same reason the reader caches do: the memo is keyed on the *path*, so a
+    gallery whose pages were replaced in place keeps answering with the
+    fingerprint of the pages that are no longer there.
+    """
+    rel = normalize_rel_path(local_dir)
+    if not rel:
+        _cover_hash_cache.clear()
+        return
+    _cover_hash_cache.pop(rel, None)
+
+
+def _cover_hash_for_match(rel: str) -> str:
+    """Adapter for the match index: it hands over a relative path, not a dir.
+
+    A library-wide restore fingerprints every gallery once, so this rides the
+    same signature-keyed memo the write path uses -- a second restore in the same
+    process re-hashes nothing that has not changed.
+    """
+    return _cover_hash_cached(rel)
+
 
 def _read_events_for(arcid: str, limit: int = MAX_HISTORY_ROWS) -> list[dict[str, Any]]:
     rows = query_rows(
@@ -228,8 +409,19 @@ def _read_events_for(arcid: str, limit: int = MAX_HISTORY_ROWS) -> list[dict[str
     return out
 
 
-def build_payload(row: dict[str, Any], *, model_id: str = "") -> dict[str, Any]:
-    """Assemble the sidecar body from one ``works`` row."""
+def build_payload(
+    row: dict[str, Any],
+    *,
+    model_id: str = "",
+    cover_hash: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble the sidecar body from one ``works`` row.
+
+    ``cover_hash`` lets a caller that already fingerprints the cover (the
+    restore's own directory scan) avoid doing it twice; when omitted it is
+    computed from ``local_dir``, memoised on the file signature.
+    """
     arcid = str(row.get("arcid") or "").strip()
     raw = _as_dict(row.get("raw"))
     user_meta = _as_dict(raw.get("user_meta"))
@@ -242,12 +434,16 @@ def build_payload(row: dict[str, Any], *, model_id: str = "") -> dict[str, Any]:
     if model:
         siglip["model"] = model
 
+    local_dir = normalize_rel_path(str(row.get("local_dir") or ""))
+    if cover_hash is None:
+        cover_hash = _cover_hash_cached(local_dir)
+
     payload: dict[str, Any] = {
         "schema": SIDECAR_SCHEMA,
         "arcid": arcid,
         # Stored so a restore can follow the gallery even if the DB row (and
         # therefore the arcid, which is a hash of the path) was rebuilt.
-        "local_dir": normalize_rel_path(str(row.get("local_dir") or "")),
+        "local_dir": local_dir,
         "written_at": datetime.now(timezone.utc).isoformat(),
         "siglip": siglip,
         "meta": {
@@ -258,6 +454,12 @@ def build_payload(row: dict[str, Any], *, model_id: str = "") -> dict[str, Any]:
             "comicinfo": _as_dict(raw.get("comicinfo")),
         },
     }
+    # Only written when page 1 could actually be fingerprinted. A sidecar whose
+    # `cover_hash` is "" is not broken -- it just has one fallback fewer, and
+    # storing an empty string would make every unfingerprintable gallery match
+    # every other one.
+    if cover_hash:
+        payload["cover_hash"] = str(cover_hash)
     # Only present when an LLM was configured. Absent is a legitimate state: it
     # means "this gallery is searched by image only", not "backup broken".
     if text_vec:
@@ -279,6 +481,7 @@ def write_sidecar(
     *,
     model_id: str = "",
     only_if_exists: bool = False,
+    meta: dict[str, Any] | None = None,
 ) -> bool:
     """Write (or refresh) one gallery's sidecar. Never raises.
 
@@ -286,12 +489,15 @@ def write_sidecar(
     keep an existing sidecar's history current, but must never *create* one --
     creation belongs to the embedding run, which is the first moment there is
     something expensive worth protecting.
+
+    ``meta`` overrides the sidecar directory (see :func:`meta_dir`); the test
+    suite points it at a temp dir so a round trip cannot touch a real library.
     """
     safe = str(arcid or "").strip()
     if not safe:
         return False
     try:
-        if only_if_exists and not sidecar_path(safe).exists():
+        if only_if_exists and not sidecar_path(safe, meta=meta).exists():
             return False
         rows = query_rows(
             "SELECT arcid, local_dir, raw, "
@@ -303,14 +509,14 @@ def write_sidecar(
         )
         if not rows:
             return False
-        payload = build_payload(rows[0], model_id=model_id)
+        payload = build_payload(rows[0], model_id=model_id, meta=meta)
         # A sidecar means "here is the compute I spent on this gallery". Without
         # a visual vector there is nothing expensive to protect yet -- and
         # writing one anyway would make the restore report claim a gallery is
         # backed up when it still has to be recomputed.
         if not payload["siglip"]["cover"]:
             return False
-        _atomic_write(sidecar_path(safe), payload)
+        _atomic_write(sidecar_path(safe, meta=meta), payload)
         return True
     except Exception:
         return False
@@ -471,12 +677,126 @@ def _read_sidecar(path: Path) -> dict[str, Any] | None:
     return data
 
 
+# --- matching a sidecar to a live gallery -----------------------------------
+#
+# An arcid is a hash of the gallery's *path*, so the moment a user renames or
+# moves a folder every id we hold is stale -- and a move breaks the relative path
+# as well. Four tiers, strongest first, because each is a progressively weaker
+# claim about identity and a weaker tier must never override a stronger one:
+#
+#   1. relative path   -- exact. What the DB and the sidecar both record.
+#   2. arcid           -- exact, and survives a *rename of a parent* (the arcid
+#                         is stale, but a row rebuilt from the same path gets the
+#                         same hash back).
+#   3. cover fingerprint -- the folder moved. Content is the only surviving
+#                         identity; page 1 is what we fingerprint.
+#   4. unique folder name -- the last resort. Only when exactly one live gallery
+#                         carries that name, so it can never pick arbitrarily.
+#
+# Tiers 1 and 2 are "the sidecar names something we can point at". Tiers 3 and 4
+# are inferences, and they are the ones that have to be conservative.
+MATCH_BY_PATH = "path"
+MATCH_BY_ARCDID = "arcid"
+MATCH_BY_COVER_HASH = "cover_hash"
+MATCH_BY_NAME = "gallery_name"
+MATCH_TIERS = (MATCH_BY_PATH, MATCH_BY_ARCDID, MATCH_BY_COVER_HASH, MATCH_BY_NAME)
+
+
+def build_match_index(
+    live: list[dict[str, Any]],
+    *,
+    cover_hash_of: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Index the live library for :func:`resolve_sidecar_match`.
+
+    ``cover_hash_of`` is injected rather than called directly so a caller can
+    supply a pre-computed map (the restore fingerprints the whole library once)
+    and so the pure lookup logic stays testable without touching a filesystem.
+    """
+    by_rel: dict[str, str] = {}
+    by_arcid: dict[str, str] = {}
+    by_name: dict[str, list[str]] = {}
+    rel_of: dict[str, str] = {}
+    for row in live or []:
+        arcid = str(row.get("arcid") or "").strip()
+        if not arcid:
+            continue
+        rel = normalize_rel_path(str(row.get("local_dir") or ""))
+        by_arcid[arcid] = rel
+        rel_of[arcid] = rel
+        if rel:
+            by_rel[rel] = arcid
+        name = gallery_name(rel)
+        if name:
+            by_name.setdefault(name, []).append(arcid)
+
+    by_hash: dict[str, str] = {}
+    if callable(cover_hash_of):
+        for arcid, rel in rel_of.items():
+            if not rel:
+                continue
+            digest = str(cover_hash_of(rel) or "").strip()
+            if not digest:
+                continue
+            # Two galleries can hold byte-identical covers (a repack, a duplicate
+            # download). An ambiguous fingerprint identifies neither, so it is
+            # dropped rather than resolved to whichever came first.
+            if digest in by_hash:
+                by_hash[digest] = ""
+            else:
+                by_hash[digest] = arcid
+    return {
+        "by_rel": by_rel,
+        "by_arcid": by_arcid,
+        "by_name": by_name,
+        "by_hash": by_hash,
+        "rel_of": rel_of,
+    }
+
+
+def resolve_sidecar_match(
+    index: dict[str, Any],
+    *,
+    sidecar_rel: str,
+    sidecar_arcid: str,
+    sidecar_cover_hash: str = "",
+) -> tuple[str, str]:
+    """Return ``(arcid, tier)`` for one sidecar. ``("", "")`` when unmatched."""
+    rel = normalize_rel_path(sidecar_rel)
+    arcid = str(sidecar_arcid or "").strip()
+    digest = str(sidecar_cover_hash or "").strip()
+
+    target = str((index.get("by_rel") or {}).get(rel) or "")
+    if target:
+        return target, MATCH_BY_PATH
+
+    if arcid and arcid in (index.get("by_arcid") or {}):
+        return arcid, MATCH_BY_ARCDID
+
+    if digest:
+        target = str((index.get("by_hash") or {}).get(digest) or "")
+        if target:
+            return target, MATCH_BY_COVER_HASH
+
+    # Last resort, and the only tier that is allowed to guess: a name match is
+    # accepted solely when the name is unique in the live library. Two folders
+    # called "Chapter 1" must not let one gallery's vectors land on the other.
+    name = gallery_name(rel)
+    if name:
+        candidates = (index.get("by_name") or {}).get(name) or []
+        if len(candidates) == 1:
+            return str(candidates[0]), MATCH_BY_NAME
+    return "", ""
+
+
 def restore_sidecars(
     *,
     dry_run: bool = False,
     on_restored: Callable[[str], None] | None = None,
     detail_sink: Callable[[str, dict[str, Any]], None] | None = None,
     include_details: bool = True,
+    meta: dict[str, Any] | None = None,
+    cover_hash_of: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Replay every sidecar back into the database.
 
@@ -485,12 +805,16 @@ def restore_sidecars(
     caller needs to show is the honest denominator -- every gallery in the live
     library, of which some were matched and restored and some carry no sidecar at
     all. The latter are the ones that will have to be recomputed.
+
+    ``meta`` and ``cover_hash_of`` exist for the test suite: the first redirects
+    the sidecar directory, the second replaces the cover fingerprint so a round
+    trip can be exercised without real image files.
     """
     report: dict[str, Any] = {
         "ok": True,
         "dry_run": bool(dry_run),
         "report_schema": REPORT_SCHEMA,
-        "meta_dir": str(meta_dir()),
+        "meta_dir": str(_resolve_meta_dir(meta)),
         "sidecars": 0,
         "matched": 0,
         "restored": 0,
@@ -504,6 +828,10 @@ def restore_sidecars(
         "unreadable_count": 0,
         "duplicate_count": 0,
         "failed_count": 0,
+        # How many galleries were found by something weaker than an exact id.
+        # A move that lands on the wrong gallery would otherwise be invisible:
+        # the counters would look exactly like a clean run.
+        "matched_by_tier": {tier: 0 for tier in MATCH_TIERS},
     }
     if include_details:
         # Only present when asked for. A compact response must not carry an empty
@@ -528,20 +856,13 @@ def restore_sidecars(
         report["error"] = f"database unavailable: {exc}"
         return report
 
-    by_rel: dict[str, str] = {}
-    by_arcid: dict[str, str] = {}
-    for row in live or []:
-        arcid = str(row.get("arcid") or "").strip()
-        if not arcid:
-            continue
-        rel = normalize_rel_path(str(row.get("local_dir") or ""))
-        by_arcid[arcid] = rel
-        if rel:
-            by_rel[rel] = arcid
+    fingerprint = cover_hash_of if callable(cover_hash_of) else _cover_hash_for_match
+    index = build_match_index(live or [], cover_hash_of=fingerprint)
+    by_arcid: dict[str, str] = index["by_arcid"]
     report["total_galleries"] = len(by_arcid)
 
     files: list[Path] = []
-    dirp = meta_dir()
+    dirp = _resolve_meta_dir(meta)
     if dirp.is_dir():
         try:
             files = sorted(
@@ -597,12 +918,17 @@ def restore_sidecars(
 
         sidecar_arcid = str(payload.get("arcid") or "").strip()
         sidecar_rel = normalize_rel_path(str(payload.get("local_dir") or ""))
+        sidecar_cover_hash = str(payload.get("cover_hash") or "").strip()
 
-        # Match on the relative path first: the arcid is a hash of the path, so a
-        # restore-after-move has a stale arcid but an intact relative layout.
-        target = by_rel.get(sidecar_rel) or ""
-        if not target and sidecar_arcid:
-            target = sidecar_arcid if sidecar_arcid in by_arcid else ""
+        # Four tiers, strongest first: relative path, then the exact arcid, then
+        # the cover fingerprint, then a unique folder name. See
+        # `resolve_sidecar_match` for why the order is what it is.
+        target, tier = resolve_sidecar_match(
+            index,
+            sidecar_rel=sidecar_rel,
+            sidecar_arcid=sidecar_arcid,
+            sidecar_cover_hash=sidecar_cover_hash,
+        )
         if not target:
             item = report_row(
                 "orphan_sidecar",
@@ -610,6 +936,12 @@ def restore_sidecars(
                 arcid=sidecar_arcid,
                 local_dir=sidecar_rel,
                 file=path.name,
+                reason=(
+                    RESTORE_REASONS["orphan"]
+                    if not (sidecar_rel or sidecar_arcid)
+                    else
+                    "backup matches no gallery by path, arcid, cover hash or unique name"
+                ),
             )
             if include_details:
                 report["orphan_sidecars"].append(item)
@@ -628,6 +960,7 @@ def restore_sidecars(
                 arcid=target,
                 local_dir=by_arcid.get(target, ""),
                 file=path.name,
+                match=tier,
             )
             if include_details:
                 report["duplicate_sidecars"].append(item)
@@ -637,6 +970,7 @@ def restore_sidecars(
             continue
 
         report["matched"] += 1
+        report["matched_by_tier"][tier] = int(report["matched_by_tier"].get(tier) or 0) + 1
         covered.add(target)
         try:
             outcome = _restore_one(target, payload, dry_run=dry_run)
@@ -686,6 +1020,10 @@ def restore_sidecars(
         if detail_sink is not None:
             wrote = int(outcome.get("visual") or 0) + int(outcome.get("text") or 0)
             wrote += int(outcome.get("history") or 0) + int(outcome.get("meta") or 0)
+            # `match` and `sidecar_dir` say *how* this backup was found. A restore
+            # that fell back to the cover fingerprint or a folder name is a
+            # different event from an exact-id restore and must be auditable as
+            # one -- the counters alone would look identical.
             detail_sink(
                 "matched",
                 report_row(
@@ -699,6 +1037,8 @@ def restore_sidecars(
                     arcid=target,
                     local_dir=by_arcid.get(target, ""),
                     file=path.name,
+                    match=tier,
+                    sidecar_dir=sidecar_rel,
                     **outcome,
                 ),
             )

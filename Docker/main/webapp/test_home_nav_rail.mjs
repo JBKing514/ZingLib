@@ -102,7 +102,11 @@ test("the sidebar renders the rail feeds and the dashboard keeps only its view t
   const sidebar = read("./src/layouts/AppSidebar.vue");
   assert.match(sidebar, /v-for="item in homeNavItems"/);
   assert.match(sidebar, /:active="tab === 'dashboard' && homeTab === item\.homeTab"/);
-  assert.match(sidebar, /@click="emit\('go-home', item\.homeTab\)"/);
+  // v1.0.3: the click goes through `onNavClick`, which emits the sub-tab and, on a
+  // phone, closes the drawer in the same tap -- a bare emit left the close to the
+  // model round-trip and the first tap was swallowed by the drawer's transition.
+  assert.match(sidebar, /@click="onNavClick\('go-home', item\.homeTab\)"/);
+  assert.match(sidebar, /function onNavClick\(event, value\) \{/);
   assert.match(sidebar, /homeTab: \{ type: String, default: "local_gallery" \}/);
 
   const dash = read("./src/views/DashboardScopePage.vue");

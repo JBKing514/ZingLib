@@ -31,24 +31,31 @@
       <template v-else>
       <transition :name="pageTransitionName" mode="out-in">
         <div :key="`p-${currentPage}-${spreadDouble ? 'd' : 's'}`" class="paged-spread" :class="{ double: spreadDouble }">
+          <!-- The two slots are bound by *side*, not by page number. Flowing
+               the lower page first puts page 3 in the left slot, so an RTL
+               spread drew 3|2 -- the start page was right but the pair read
+               left-to-right, which is precisely the complaint this layout
+               answers. A manga spread has to open with the earlier page on the
+               right, so the halves swap with the direction and nothing else
+               about the order (start page, step, wheel strip) has to move. -->
           <img
-            :src="pageRenderUrl(spreadPrimaryPage)"
+            :src="pageRenderUrl(spreadLeftPage)"
             class="reader-image"
             :class="`fit-${fitMode}`"
             :style="readerFilterStyle"
-            alt="page"
+            alt="page-left"
             draggable="false"
             @dragstart.prevent
             @load="onPagedImageLoad"
             @error="onPagedImageError"
           />
           <img
-            v-if="spreadDouble && spreadSecondaryPage > 0"
-            :src="pageRenderUrl(spreadSecondaryPage)"
+            v-if="spreadDouble && spreadRightPage > 0"
+            :src="pageRenderUrl(spreadRightPage)"
             class="reader-image"
             :class="`fit-${fitMode}`"
             :style="readerFilterStyle"
-            alt="page-secondary"
+            alt="page-right"
             draggable="false"
             @dragstart.prevent
             @load="onPagedImageLoad"
@@ -288,6 +295,11 @@ let localStatusPollTimer = 0;
 const localPrefetchSeen = new Set();
 const wheelThumbAspectMap = ref({});
 const wheelThumbPreloadLoaders = new Map();
+// The cursor the *thumbnail strip* is built from, which lags the slider by the
+// settle delay. Keeping the two apart is the whole point: the slider has to track
+// the finger, the <img> tags must not.
+const wheelStripPage = ref(1);
+let wheelStripSettleTimer = 0;
 
 const tapToTurn = computed(() => settingsStore.config?.READER_TAP_TO_TURN !== false);
 const swipeEnabled = computed(() => settingsStore.config?.READER_SWIPE_ENABLED !== false);
@@ -409,22 +421,28 @@ const readerFilterStyle = computed(() => {
   if (key === "dark_invert") return { filter: "invert(0.9) hue-rotate(180deg) brightness(0.85)" };
   return { filter: "none" };
 });
-const spreadPrimaryPage = computed(() => {
+// Which page sits in each half of a double spread.
+//
+// The earlier page always goes in the slot on the *leading* side of the
+// reading direction: the right-hand half for RTL, the left for LTR. The old
+// shape computed a primary/secondary pair and then flowed them into the DOM in
+// that order, so RTL rendered the earlier page on the left -- a spread of 3|2,
+// i.e. a right-to-left cursor drawn left-to-right. Splitting the two values by
+// side (instead of by rank) makes the binding independent of DOM order.
+//
+// The start page and the step are deliberately untouched: `currentPage` is
+// already the leading page of the spread in both directions, exactly as the
+// page-turn code assumes when it advances by `pageStep`.
+const spreadLeftPage = computed(() => {
   const cur = Number(currentPage.value || 1);
   if (!spreadDouble.value) return cur;
-  if (isRtl.value || isBottomToTop.value) {
-    return Math.max(1, cur - 1);
-  }
-  return cur;
+  return isRtl.value ? cur + 1 : cur;
 });
-const spreadSecondaryPage = computed(() => {
-  if (!spreadDouble.value) return 0;
+const spreadRightPage = computed(() => {
   const cur = Number(currentPage.value || 1);
-  if (isRtl.value || isBottomToTop.value) {
-    return cur;
-  }
-  const n = cur + 1;
-  return n <= Number(totalPages.value || 1) ? n : 0;
+  if (!spreadDouble.value) return 0;
+  const leading = isRtl.value ? cur : cur + 1;
+  return leading <= Number(totalPages.value || 1) ? leading : 0;
 });
 const ghostPages = computed(() => {
   const maxPage = Math.max(1, Number(totalPages.value || 1));
@@ -437,15 +455,18 @@ const ghostPages = computed(() => {
     seen.add(n);
     unique.push(n);
   };
-  const primary = Number(spreadPrimaryPage.value || 1);
-  const secondary = Number(spreadSecondaryPage.value || 0);
+  const primary = Number(spreadLeftPage.value || 1);
+  const secondary = Number(spreadRightPage.value || 0);
   if (!spreadDouble.value) {
     [primary - 1, primary + 1].forEach(pushPage);
     return unique;
   }
+  // Prefetch walks the *page* axis, not the slot axis, so the neighbours are
+  // taken from the leading page and its partner rather than from "left/right".
   const step = 2;
-  const prevPrimary = primary - step;
-  const nextPrimary = primary + step;
+  const lead = Number(currentPage.value || 1);
+  const prevPrimary = lead - step;
+  const nextPrimary = lead + step;
   pushPage(primary);
   if (secondary > 0) pushPage(secondary);
   pushPage(prevPrimary);
@@ -492,7 +513,10 @@ const wheelThumbScalePct = computed({
 const wheelPages = computed(() => {
   const out = [];
   const range = Number(wheelRange.value || 4);
-  const center = Math.max(1, Math.min(Number(totalPages.value || 1), Number(wheelCursorPage.value || currentPage.value || 1)));
+  // Built from the settled cursor, not the live one: `src` here becomes an <img>,
+  // and building it per tick is what buried the reader's own page request behind
+  // dozens of skipped-past thumbnails.
+  const center = Math.max(1, Math.min(Number(totalPages.value || 1), Number(wheelStripPage.value || currentPage.value || 1)));
   const max = Math.max(1, totalPages.value);
   const start = Math.max(1, center - range);
   const end = Math.min(max, center + range);
@@ -524,6 +548,21 @@ function pageImageUrl(page) {
   return `/api/reader/${encodeURIComponent(arcid.value)}/page/${page}?mode=${mode}`;
 }
 
+// The nav wheel used to reuse `pageImageUrl`, i.e. a full-size read-quality
+// transform per thumbnail. A drag crosses dozens of pages, so those requests
+// queued ahead of the page the reader was waiting for on the browser's 6-per-
+// origin connection limit -- the正文 arrived last, behind images nobody stopped
+// to look at. `thumb` is the wheel's own cheap mode (200px/q55), and a browser
+// cache hit is guaranteed because the URL no longer changes with the reader's
+// quality setting.
+const WHEEL_THUMB_MODE = "thumb";
+function wheelThumbUrl(page) {
+  if (!manifestReady.value) return '';
+  const sid = String(localReaderSessionId.value || "").trim();
+  if (sid) return `/api/reader/session/${encodeURIComponent(sid)}/page/${Number(page || 1)}?mode=${WHEEL_THUMB_MODE}`;
+  return `/api/reader/${encodeURIComponent(arcid.value)}/page/${page}?mode=${WHEEL_THUMB_MODE}`;
+}
+
 function withNonce(url, nonce) {
   const src = String(url || "").trim();
   if (!src) return "";
@@ -541,7 +580,7 @@ function continuousRenderUrl(page) {
 }
 
 function pageThumbUrl(page) {
-  return pageImageUrl(page);
+  return wheelThumbUrl(page);
 }
 
 function pageThumbData(page) {
@@ -571,10 +610,19 @@ function resetWheelThumbPreload() {
   wheelThumbAspectMap.value = {};
 }
 
-function preloadAllWheelThumbs() {
+// Measure only the strip that is on screen. This used to loop from page 1 to the
+// last page of the gallery, i.e. one request per page of the book, all of them
+// querying the reader's quality mode: opening a 400-page gallery queued 400
+// full-size images ahead of the page the user was actually waiting on. Bounded to
+// the wheel's own window, and only for pages the strip is showing.
+function preloadWheelStripThumbs() {
   resetWheelThumbPreload();
   const max = Math.max(1, Number(totalPages.value || 1));
-  for (let p = 1; p <= max; p += 1) {
+  const range = Number(wheelRange.value || 4);
+  const center = Math.max(1, Math.min(max, Number(wheelStripPage.value || currentPage.value || 1)));
+  const start = Math.max(1, center - range);
+  const end = Math.min(max, center + range);
+  for (let p = start; p <= end; p += 1) {
     const src = pageThumbUrl(p);
     if (!src) continue;
     const img = new Image();
@@ -659,7 +707,18 @@ function setPage(next, directionHint = 1, opts = {}) {
   if (turned && !isEnd) {
     readTurnCount += 1;
   }
-  transitionName.value = directionHint >= 0 ? "reader-slide-next" : "reader-slide-prev";
+  // `directionHint` is +1 when the page *number* advances and -1 when it
+  // retreats. The on-screen motion is not the same thing: reading direction
+  // decides which edge the incoming page enters from. In LTR a forward turn
+  // brings the next page in from the right; in RTL it comes in from the left,
+  // because the content itself flows the other way. Encoding both in the name
+  // (rather than negating the hint) is what makes the two directions animate
+  // differently -- negating alone cancelled out and left both directions using
+  // the LTR slide.
+  const forward = directionHint >= 0;
+  transitionName.value = isRtl.value
+    ? (forward ? "reader-slide-rtl-next" : "reader-slide-rtl-prev")
+    : (forward ? "reader-slide-next" : "reader-slide-prev");
   currentPage.value = clamped;
   if (turned && !isEnd) {
     recordReadEvent("reader-page-turn");
@@ -831,6 +890,14 @@ function beginPagedProgress() {
   }, 110);
 }
 
+// The strip the user can actually see. When it moves, the previous strip's
+// in-flight requests are dropped -- `resetWheelThumbPreload` clears each loader's
+// `src`, which is what frees the connection slot for the page being read.
+watch(wheelStripPage, () => {
+  if (!manifestReady.value) return;
+  preloadWheelStripThumbs();
+});
+
 function jumpToPage(page) {
   const p = Number(page || 1);
   if (!Number.isFinite(p)) return;
@@ -842,7 +909,31 @@ function jumpToPage(page) {
 function onWheelPreviewPage(page) {
   const p = Number(page || 1);
   if (!Number.isFinite(p)) return;
-  wheelCursorPage.value = Math.max(1, Math.min(Number(totalPages.value || 1), Math.round(p)));
+  const clamped = Math.max(1, Math.min(Number(totalPages.value || 1), Math.round(p)));
+  // Move the slider and the label straight away -- the drag has to feel attached
+  // to the finger -- but only rebuild the thumbnail strip once the drag settles.
+  // `wheelPages` is what creates <img> tags, so following every tick meant a fast
+  // drag fired a request per page it merely passed over.
+  wheelCursorPage.value = clamped;
+  armWheelStripSettle();
+}
+
+// Long enough that a flick does not emit its whole path, short enough that
+// letting go feels immediate.
+const WHEEL_STRIP_SETTLE_MS = 150;
+function armWheelStripSettle() {
+  clearWheelStripSettle();
+  wheelStripSettleTimer = window.setTimeout(() => {
+    wheelStripSettleTimer = 0;
+    wheelStripPage.value = wheelCursorPage.value;
+  }, WHEEL_STRIP_SETTLE_MS);
+}
+
+function clearWheelStripSettle() {
+  if (wheelStripSettleTimer) {
+    window.clearTimeout(wheelStripSettleTimer);
+    wheelStripSettleTimer = 0;
+  }
 }
 
 function toggleUi() {
@@ -1147,6 +1238,8 @@ async function loadManifest() {
     }
   }
   wheelCursorPage.value = Number(currentPage.value || 1);
+  // An authoritative jump, not a drag: the strip follows at once.
+  wheelStripPage.value = wheelCursorPage.value;
   resetImageStates();
   manifestReady.value = true;
   updateRoutePage();
@@ -1167,6 +1260,8 @@ watch(() => route.query.page, () => {
   if (String(route.params.arcid || "").trim() !== arcid.value) return;
   const p = pageFromRoute();
   wheelCursorPage.value = Math.max(1, Math.min(Number(totalPages.value || 1), Number(p || 1)));
+  // Back/forward and deep links are authoritative too -- no settle delay.
+  wheelStripPage.value = wheelCursorPage.value;
   if (p !== currentPage.value) {
     const dirHint = p > currentPage.value ? 1 : -1;
     setPage(p, dirHint, { skipRoute: true, force: true });
@@ -1269,6 +1364,7 @@ onBeforeUnmount(() => {
   }
   clearPagedProgressTimer();
   localPrefetchSeen.clear();
+  clearWheelStripSettle();
   resetWheelThumbPreload();
   clearLocalReaderStatusPolling();
   closeLocalReaderSession().catch(() => null);
@@ -1447,10 +1543,18 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.22);
 }
 
+/* Four transitions, not two: the reading direction decides which edge the
+   incoming page slides in from. LTR forward comes from the right; RTL forward
+   comes from the left. Collapsing this to a single axis is what made the RTL
+   reader animate as though it were LTR. */
 .reader-slide-next-enter-active,
 .reader-slide-next-leave-active,
 .reader-slide-prev-enter-active,
-.reader-slide-prev-leave-active {
+.reader-slide-prev-leave-active,
+.reader-slide-rtl-next-enter-active,
+.reader-slide-rtl-next-leave-active,
+.reader-slide-rtl-prev-enter-active,
+.reader-slide-rtl-prev-leave-active {
   transition: transform 0.2s ease-out, opacity 0.2s ease-out;
 }
 
@@ -1471,6 +1575,28 @@ onBeforeUnmount(() => {
 
 .reader-slide-prev-leave-to {
   transform: translateX(28px);
+  opacity: 0.75;
+}
+
+/* RTL mirrors both: a forward turn enters from the left and leaves to the
+   right, and a backward turn does the opposite. */
+.reader-slide-rtl-next-enter-from {
+  transform: translateX(-28px);
+  opacity: 0.75;
+}
+
+.reader-slide-rtl-next-leave-to {
+  transform: translateX(28px);
+  opacity: 0.75;
+}
+
+.reader-slide-rtl-prev-enter-from {
+  transform: translateX(28px);
+  opacity: 0.75;
+}
+
+.reader-slide-rtl-prev-leave-to {
+  transform: translateX(-28px);
   opacity: 0.75;
 }
 </style>

@@ -109,6 +109,20 @@ class AuthChangePasswordRequest(BaseModel):
     new_password: str = ""
 
 
+class AuthRecoveryPasswordChangeRequest(BaseModel):
+    """Regain control with a burn-after-use recovery code.
+
+    The old password is deliberately absent: the recovery code *is* the
+    credential, and the whole point of the flow is that the user cannot produce
+    the old one. `username` names the account to reset (a recovery code is not
+    bound to one).
+    """
+
+    username: str = ""
+    recovery_code: str = ""
+    new_password: str = ""
+
+
 class AuthDeleteAccountRequest(BaseModel):
     password: str = ""
 

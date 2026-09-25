@@ -7,6 +7,20 @@
       <v-btn color="secondary" variant="tonal" prepend-icon="mdi-restore" @click="reloadAll">{{ t("settings.local_lib.reload") }}</v-btn>
       <v-btn color="warning" variant="tonal" :loading="clearingThumbCache" prepend-icon="mdi-image-off-outline" @click="clearLocalThumbCacheNow">{{ t("settings.local_lib.clear_thumb_cache") }}</v-btn>
     </div>
+    <!-- Housekeeping that belongs with the library itself (not with the vector
+         ingest settings it used to be stranded in): both act on the live
+         database, and both are irreversible, so they keep a confirmation. -->
+    <v-divider class="my-3" />
+    <div class="text-subtitle-2 font-weight-medium mb-2">{{ t("settings.local_lib.maintenance.title") }}</div>
+    <div class="text-body-2 text-medium-emphasis mb-3">{{ t("settings.local_lib.maintenance.hint") }}</div>
+    <div class="d-flex ga-2 flex-wrap">
+      <v-btn color="warning" variant="tonal" prepend-icon="mdi-content-duplicate" @click="clearWorksDuplicatesAction">{{ t("settings.data_clean.dedup_works") }}</v-btn>
+      <v-btn color="warning" variant="tonal" prepend-icon="mdi-history" @click="openReadEventsConfirm">{{ t("settings.data_clean.clear_read_events") }}</v-btn>
+      <!-- Rebuilding the gallery database asks for the administrator password, so
+           it belongs with the other housekeeping that acts on the live database
+           rather than in the danger zone, which is now only the connection. -->
+      <v-btn color="error" variant="tonal" prepend-icon="mdi-database-refresh-outline" :disabled="isRecoveryMode" @click="openRebuildDialog">{{ t("settings.rebuild.title") }}</v-btn>
+    </div>
     <v-row class="mt-2">
       <v-col cols="12" md="6">
         <div class="d-flex align-center ga-2 flex-wrap">
@@ -174,6 +188,12 @@
           <div class="text-caption text-medium-emphasis mb-3">
             {{ t("settings.local_lib.backup.vectors", { visual: restoreVisual, text: restoreText, history: restoreHistory, meta: restoreMeta }) }}
           </div>
+          <v-alert v-if="restoreMovedCount" type="info" variant="tonal" density="comfortable" class="mb-2">
+            <div>{{ t("settings.local_lib.backup.moved_title", { n: restoreMovedCount }) }}</div>
+            <div class="text-caption">
+              {{ t("settings.local_lib.backup.moved_detail", { cover: restoreMovedByCover, name: restoreMovedByName }) }}
+            </div>
+          </v-alert>
           <v-alert v-if="restoreMissingCount" type="warning" variant="tonal" density="comfortable" class="mb-2">
             {{ t("settings.local_lib.backup.missing_title", { n: restoreMissingCount }) }}
           </v-alert>
@@ -567,6 +587,33 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <v-dialog v-model="confirmReadEventsDialog" max-width="460">
+    <v-card>
+      <v-card-title class="text-h6">{{ t("settings.data_clean.clear_read_events") }}</v-card-title>
+      <v-card-text>{{ t("settings.data_clean.clear_read_events_confirm") }}</v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" @click="confirmReadEventsDialog = false">{{ t("settings.unlock.cancel") }}</v-btn>
+        <v-btn color="error" @click="confirmClearReadEventsNow">{{ t("settings.unlock.confirm") }}</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="rebuildDialog" max-width="520" persistent>
+    <v-card>
+      <v-card-title>{{ t("settings.rebuild.title") }}</v-card-title>
+      <v-card-text>
+        <p class="mb-4">{{ t("settings.rebuild.confirm") }}</p>
+        <v-text-field v-model="rebuildPassword" :label="t('auth.password')" type="password" autocomplete="current-password" :disabled="rebuilding" />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn :disabled="rebuilding" @click="closeRebuildDialog">{{ t("common.cancel") }}</v-btn>
+        <v-btn color="error" :loading="rebuilding" :disabled="!rebuildPassword" @click="confirmRebuild">{{ t("settings.rebuild.title") }}</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup>
@@ -579,6 +626,7 @@ import {
   getConfig,
   getTagReapplyStatus,
   getTranslationStatus,
+  rebuildGalleryDatabase,
   restoreLocalMetadata,
   writebackLocalMetadata,
   startTagReapply,
@@ -586,6 +634,8 @@ import {
   updateConfig,
   uploadTranslationFile,
 } from "../../api";
+import { useAppStore } from "../../stores/appStore";
+import { useDashboardStore } from "../../stores/dashboardStore";
 import { useLayoutStore } from "../../stores/layoutStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useToastStore } from "../../stores/useToastStore";
@@ -620,10 +670,14 @@ import {
 const layoutStore = useLayoutStore();
 const settingsStore = useSettingsStore();
 const toast = useToastStore();
+const appStore = useAppStore();
 
 const scanning = ref(false);
 const clearingThumbCache = ref(false);
 const resultText = ref("");
+// Clearing the read history is irreversible and deletes every row in
+// `read_events`, so it goes through a confirmation before touching the DB.
+const confirmReadEventsDialog = ref(false);
 const showJpnTitle = ref(false);
 const useTranslatedTags = ref(true);
 const savingDisplayPrefs = ref(false);
@@ -663,6 +717,17 @@ const restoreMeta = computed(() => Number(restoreReport.value?.meta_restored || 
 const restoreOrphanCount = computed(() => Number(restoreReport.value?.orphan_count || 0));
 const restoreUnreadableCount = computed(() => Number(restoreReport.value?.unreadable_count || 0));
 const restoreFailedCount = computed(() => Number(restoreReport.value?.failed_count || 0));
+// A match that needed a fallback is a *different* event from an exact-id match:
+// the gallery's folder was moved or renamed, and the backup was found by its
+// cover or by a unique folder name. The counters alone look identical to a clean
+// run, so this is surfaced rather than left to the downloadable log.
+const restoreMovedByCover = computed(
+  () => Number(restoreReport.value?.matched_by_tier?.cover_hash || 0),
+);
+const restoreMovedByName = computed(
+  () => Number(restoreReport.value?.matched_by_tier?.gallery_name || 0),
+);
+const restoreMovedCount = computed(() => restoreMovedByCover.value + restoreMovedByName.value);
 // "Anything worth showing": a library with no sidecars at all gets the "no
 // backups yet" hint instead of a row of zeroes.
 const restoreShowsAny = computed(() => Number(restoreReport.value?.sidecars || 0) > 0);
@@ -1071,6 +1136,71 @@ async function clearLocalThumbCacheNow() {
   } finally {
     clearingThumbCache.value = false;
   }
+}
+
+function openReadEventsConfirm() {
+  confirmReadEventsDialog.value = true;
+}
+
+async function confirmClearReadEventsNow() {
+  confirmReadEventsDialog.value = false;
+  await settingsStore.clearReadEventsAction();
+}
+
+// --- rebuild the gallery database ------------------------------------------
+// Moved here from the danger zone: it is destructive, but it is gated on the
+// administrator password (the same gate the read-events wipe above uses
+// server-side), not on the panel-wide unlock switch. The dialog is persistent
+// because the password must be typed before it can be dismissed.
+//
+// The dashboard's cached feed is explicitly emptied afterward: every one of
+// those entries now points at a row this call just deleted, and letting the
+// store re-fetch on its own would show phantom cards until each request
+// happened to land.
+const rebuildDialog = ref(false);
+const rebuildPassword = ref("");
+const rebuilding = ref(false);
+const isRecoveryMode = computed(() => appStore.isRecoveryMode);
+
+function openRebuildDialog() {
+  rebuildPassword.value = "";
+  rebuildDialog.value = true;
+}
+
+function closeRebuildDialog() {
+  if (rebuilding.value) return;
+  rebuildDialog.value = false;
+  rebuildPassword.value = "";
+}
+
+async function confirmRebuild() {
+  if (rebuilding.value) return;
+  rebuilding.value = true;
+  try {
+    const result = await rebuildGalleryDatabase(rebuildPassword.value);
+    const dashboard = useDashboardStore();
+    for (const state of [dashboard.homeLocal, dashboard.homeLocalFavorite, dashboard.homeHistory, dashboard.homeSearchState]) {
+      state.items = [];
+      state.cursor = "";
+      state.hasMore = false;
+    }
+    dashboard.mobilePreviewItem = null;
+    dashboard.localFolderNodes = [];
+    rebuildDialog.value = false;
+    toast.success(t("settings.rebuild.done", { count: result.removed }));
+  } catch (e) {
+    toast.warning(String(e?.response?.data?.detail || e));
+  } finally {
+    rebuildPassword.value = "";
+    rebuilding.value = false;
+  }
+}
+
+// These two live on the settings store because they were written for the vector
+// ingest page; the buttons moved here, so the template reads them through
+// wrappers rather than pulling the whole store into scope.
+function clearWorksDuplicatesAction() {
+  return settingsStore.clearWorksDuplicatesAction();
 }
 
 /**

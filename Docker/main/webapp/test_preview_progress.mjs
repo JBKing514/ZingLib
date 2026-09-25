@@ -70,8 +70,13 @@ function makeTeardown(body) {
     localPrefetchSeen: new Set(),
     ...body,
   };
+  // Every call the real teardown makes has to be stubbed here by name: this runs
+  // the source slice, so a new cleanup step shows up as a ReferenceError rather
+  // than as a silently missing assertion. `clearWheelStripSettle` joined the list
+  // with the v1.0.3 wheel-thumbnail work.
   for (const name of ["clearLongPressTimer", "clearBookmarkSyncTimer", "clearReadQualifyTimer",
-    "clearPagedProgressTimer", "resetWheelThumbPreload", "clearLocalReaderStatusPolling", "disposeContinuousScroll"]) {
+    "clearPagedProgressTimer", "clearWheelStripSettle", "resetWheelThumbPreload",
+    "clearLocalReaderStatusPolling", "disposeContinuousScroll"]) {
     context[name] = () => {};
   }
   const start = reader.lastIndexOf("onBeforeUnmount(() => {");

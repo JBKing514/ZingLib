@@ -102,6 +102,48 @@ test("the shell owns the gesture, and the dashboard owns none of it", () => {
   assert.match(swipe, /if \(action === "open"\) \{[\s\S]*?tracking = false;[\s\S]*?drawer\.value = true;/);
 });
 
+test("the shell yields while a page-owned long-press picker holds the pointer", () => {
+  // The dashboard's long-press row picker is scrubbed by the same horizontal drag
+  // the shell reads as "pull the drawer out", and its backdrop only covers the
+  // page *after* it opens -- so the shell has to be told, not guess.
+  assert.equal(resolveSidebarSwipe(pull({ longPressActive: true })), "", "pull suppressed");
+  assert.equal(resolveSidebarSwipe(pull({ longPressActive: true, drawerOpen: true, dx: -90 })), "", "push suppressed");
+  assert.equal(resolveSidebarSwipe(pull({ longPressActive: false })), "open", "and released again");
+  assert.equal(resolveSidebarSwipe(pull({ longPressActive: true, startX: 900 })), "", "no edge, still suppressed");
+
+  const swipe = read("./src/composables/useSidebarSwipe.js");
+  assert.match(swipe, /if \(input\.longPressActive\) return "";/);
+  assert.match(swipe, /export function useSidebarSwipe\(\{ drawer, rail, enabled, longPressActive \}\)/);
+  assert.match(swipe, /longPressActive: !!\(longPressActive && longPressActive\.value\)/);
+  assert.match(swipe, /if \(longPressActive && longPressActive\.value\) return;/);
+
+  // One flag, raised where the picker is opened and cleared where it closes.
+  const store = read("./src/stores/dashboardStore.js");
+  assert.match(store, /const longPressPickerActive = ref\(false\)/);
+  assert.match(store, /\n    longPressPickerActive,/);
+  const layout = read("./src/layouts/MainLayout.vue");
+  assert.match(layout, /longPressActive: toRef\(dashboardStore, "longPressPickerActive"\)/);
+  const dash = read("./src/views/DashboardScopePage.vue");
+  assert.match(dash, /longPressPickerOpen\(open\) \{[\s\S]*?this\.longPressPickerActive = !!open;/);
+  // <KeepAlive> keeps the view mounted, so a route change has to lower the flag.
+  assert.match(dash, /deactivated\(\) \{[\s\S]*?this\.closeLongPressPicker\(true\);[\s\S]*?\n  \},\n  beforeUnmount/);
+});
+
+test("one tap on a sidebar item both navigates and closes the drawer", () => {
+  const sidebar = read("./src/layouts/AppSidebar.vue");
+  // A bare `emit("go-home", ...)` left the closing to the model round-trip; on a
+  // phone the overlay drawer turns `inert` for a frame while it transitions, so
+  // that first tap only ever hovered. Collapsing it explicitly is half the fix.
+  assert.doesNotMatch(sidebar, /@click="emit\('go-home', item\.homeTab\)"/);
+  assert.doesNotMatch(sidebar, /@click="emit\('go-tab', item\.key\)"/);
+  assert.match(sidebar, /@click="onNavClick\('go-home', item\.homeTab\)"/);
+  assert.match(sidebar, /@click="onNavClick\('go-tab', item\.key\)"/);
+  assert.match(sidebar, /function onNavClick\(event, value\) \{[\s\S]*?emit\(event, value\);[\s\S]*?if \(mobile\.value\) emit\("update:modelValue", false\);[\s\S]*?\n\}/);
+  // The other half: an explicit mode, so `isTemporary` cannot flip underneath the
+  // user when the breakpoint resolves after the first paint.
+  assert.match(sidebar, /:temporary="mobile"/);
+});
+
 test("a blank tap in the tablet pane puts the preview away", () => {
   const dash = read("./src/views/DashboardScopePage.vue");
   assert.match(dash, /class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick"/);

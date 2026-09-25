@@ -942,6 +942,11 @@ export default {
     // page mounts before the browser reflows, so by the time a route guard could
     // read scrollY it is already the new page's.
     this._saveFeedScroll();
+    // <KeepAlive> keeps this view mounted, so a route change would leave the
+    // picker's flag raised in the store -- and the shell's sidebar gesture
+    // suppressed on the page we moved to. The picker cannot survive the trip
+    // anyway: its anchored row is gone.
+    this.closeLongPressPicker(true);
   },
   beforeUnmount() {
     this.closeLongPressPicker(true);
@@ -960,6 +965,13 @@ export default {
     this.restoreLeftTabletPreviewRailMode(true);
   },
   watch: {
+    // Mirror the picker's lifetime into the store so the shell's sidebar gesture
+    // can stand down while the picker owns the pointer. Watching the open flag
+    // (rather than setting the store in each of the four close paths) keeps the
+    // two in step even if a new exit is added later.
+    longPressPickerOpen(open) {
+      this.longPressPickerActive = !!open;
+    },
     homeTab(next, prev) {
       // Hand the tab we are leaving its place back before anything re-renders.
       this._saveFeedScroll(prev);

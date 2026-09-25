@@ -255,12 +255,188 @@ class PayloadRuleTests(unittest.TestCase):
             self.assertIsNone(gmb._read_sidecar(good))
 
 
+class MatchTierTests(unittest.TestCase):
+    """The four-tier sidecar -> gallery match, as pure data.
+
+    A move changes both the arcid (a hash of the path) and the relative path, so
+    the two exact tiers stop working and only content or a name can identify the
+    gallery. Every tier here is ordered by how strong its claim is, and the
+    weaker ones must never be allowed to win over a stronger one.
+    """
+
+    LIVE = [
+        {"arcid": "local-a", "local_dir": "Uploads/Box/Alpha"},
+        {"arcid": "local-b", "local_dir": "Inbox/Beta"},
+    ]
+    HASHES = {
+        "Uploads/Box/Alpha": "h-alpha",
+        "Inbox/Beta": "h-beta",
+    }
+
+    def _index(self, live=None, hashes=None):
+        return gmb.build_match_index(
+            live if live is not None else self.LIVE,
+            cover_hash_of=lambda rel: (hashes if hashes is not None else self.HASHES).get(rel, ""),
+        )
+
+    def test_tier_one_wins_on_the_relative_path(self):
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(),
+            sidecar_rel="Uploads/Box/Alpha",
+            sidecar_arcid="local-stale-and-wrong",
+            sidecar_cover_hash="h-beta",
+        )
+        self.assertEqual((target, tier), ("local-a", gmb.MATCH_BY_PATH))
+
+    def test_tier_two_wins_when_only_the_arcid_survives(self):
+        # The parent was renamed, so `local_dir` moved -- but the row was rebuilt
+        # from the same path and got its old hash back.
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(),
+            sidecar_rel="Old/Parent/Alpha",
+            sidecar_arcid="local-a",
+            sidecar_cover_hash="",
+        )
+        self.assertEqual((target, tier), ("local-a", gmb.MATCH_BY_ARCDID))
+
+    def test_tier_three_follows_the_cover_when_the_folder_moved(self):
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(),
+            sidecar_rel="Uploads/Box/Alpha",
+            sidecar_arcid="local-stale",
+            sidecar_cover_hash="h-alpha",
+        )
+        # The path still exists in this fixture, so tier 1 answers -- move it.
+        self.assertEqual(tier, gmb.MATCH_BY_PATH)
+
+        moved = [
+            {"arcid": "local-a", "local_dir": "Moved/Elsewhere/Alpha"},
+            {"arcid": "local-b", "local_dir": "Inbox/Beta"},
+        ]
+        hashes = {"Moved/Elsewhere/Alpha": "h-alpha", "Inbox/Beta": "h-beta"}
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(moved, hashes),
+            sidecar_rel="Uploads/Box/Alpha",
+            sidecar_arcid="local-stale",
+            sidecar_cover_hash="h-alpha",
+        )
+        self.assertEqual((target, tier), ("local-a", gmb.MATCH_BY_COVER_HASH))
+
+    def test_tier_four_needs_a_unique_folder_name(self):
+        moved = [
+            {"arcid": "local-a", "local_dir": "Moved/Alpha"},
+            {"arcid": "local-b", "local_dir": "Inbox/Beta"},
+        ]
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(moved, {}),
+            sidecar_rel="Uploads/Box/Alpha",
+            sidecar_arcid="local-stale",
+            sidecar_cover_hash="",
+        )
+        self.assertEqual((target, tier), ("local-a", gmb.MATCH_BY_NAME))
+
+    def test_an_ambiguous_folder_name_refuses_to_guess(self):
+        ambiguous = [
+            {"arcid": "local-a", "local_dir": "A/Shared"},
+            {"arcid": "local-c", "local_dir": "B/Shared"},
+        ]
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(ambiguous, {}),
+            sidecar_rel="Z/Shared",
+            sidecar_arcid="local-stale",
+            sidecar_cover_hash="",
+        )
+        self.assertEqual((target, tier), ("", ""), "two candidates is not a match")
+
+    def test_an_ambiguous_cover_fingerprint_refuses_to_guess(self):
+        # Two galleries holding byte-identical covers identify neither.
+        twins = [
+            {"arcid": "local-a", "local_dir": "A/Twin"},
+            {"arcid": "local-c", "local_dir": "B/Twin"},
+        ]
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(twins, {"A/Twin": "same", "B/Twin": "same"}),
+            sidecar_rel="Z/Gone",
+            sidecar_arcid="local-stale",
+            sidecar_cover_hash="same",
+        )
+        self.assertEqual((target, tier), ("", ""), "an ambiguous fingerprint is not a match")
+
+    def test_an_empty_fingerprint_never_matches_everything(self):
+        # A gallery whose page 1 could not be read stores no hash at all. If ""
+        # were indexed, every unfingerprintable gallery would match every other.
+        live = [{"arcid": "local-a", "local_dir": "A/Nohash"}]
+        index = self._index(live, {"A/Nohash": ""})
+        # The name tier must still work; the hash tier must not have a "" entry.
+        self.assertNotIn("", index["by_hash"])
+        target, tier = gmb.resolve_sidecar_match(
+            index,
+            sidecar_rel="Z/Gone",
+            sidecar_arcid="",
+            sidecar_cover_hash="",
+        )
+        self.assertEqual((target, tier), ("", ""))
+
+    def test_a_stronger_tier_is_never_overridden_by_a_weaker_one(self):
+        # The path points at one gallery and the fingerprint at another: the path
+        # is the sidecar's own statement about where it lives and must win.
+        target, tier = gmb.resolve_sidecar_match(
+            self._index(),
+            sidecar_rel="Uploads/Box/Alpha",
+            sidecar_arcid="local-b",
+            sidecar_cover_hash="h-beta",
+        )
+        self.assertEqual((target, tier), ("local-a", gmb.MATCH_BY_PATH))
+
+    def test_build_match_index_reports_what_each_tier_resolved(self):
+        index = self._index()
+        self.assertEqual(index["by_rel"]["Inbox/Beta"], "local-b")
+        self.assertEqual(index["by_arcid"]["local-a"], "Uploads/Box/Alpha")
+        self.assertEqual(index["by_name"]["Alpha"], ["local-a"])
+        self.assertEqual(index["by_hash"]["h-beta"], "local-b")
+
+    def test_cover_hash_is_a_pure_function_of_the_first_page(self):
+        # Only the head and tail matter; the middle must not shift the digest.
+        import io
+
+        def digest(payload: bytes) -> str:
+            return gmb._hash_reader(io.BytesIO(payload))
+
+        head = b"\xff\xd8\xff\xe0" + b"a" * 100
+        self.assertEqual(digest(head), digest(head))
+        self.assertNotEqual(digest(head), digest(b"\xff\xd8\xff\xe0" + b"b" * 100))
+        self.assertEqual(digest(b""), "", "an empty file has no fingerprint")
+
+    def test_cover_hash_of_a_directory_uses_the_first_page_in_natural_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gallery = root / "lib" / "R44 Cover Order"
+            gallery.mkdir(parents=True)
+            # page 10 must not sort before page 2, or the "cover" would be an
+            # arbitrary inner page and the fingerprint would drift with the sort.
+            (gallery / "2.jpg").write_bytes(b"PAGE-TWO" * 40)
+            (gallery / "10.jpg").write_bytes(b"PAGE-TEN" * 40)
+            (gallery / "1.jpg").write_bytes(b"PAGE-ONE" * 40)
+            (gallery / "notes.txt").write_bytes(b"not an image")
+            with patch.object(gmb, "LOCAL_LIB_DIR", root / "lib"):
+                digest = gmb.gallery_cover_hash("R44 Cover Order")
+                expected = gmb._hash_reader(__import__("io").BytesIO((gallery / "1.jpg").read_bytes()))
+            self.assertTrue(digest)
+            self.assertEqual(digest, expected)
+
+
 class RoundTripTests(unittest.TestCase):
     """Needs Postgres. Skips -- never fails -- when there is none."""
 
     arcid = "local-r44-roundtrip"
     bare_arcid = "local-r44-nosidecar"
     orphan_arcid = "local-r44-orphan"
+    # A gallery whose folder is moved: a fresh row under a new path gets a new
+    # arcid, while the sidecar still names the old one.
+    moved_arcid = "local-r44-moved"
+    moved_rel = "r44-selftest/after-the-move"
+    twin_a_arcid = "local-r44-twin-a"
+    twin_b_arcid = "local-r44-twin-b"
     rel = "r44-selftest/gallery-with-backup"
     bare_rel = "r44-selftest/gallery-without-backup"
 
@@ -279,11 +455,24 @@ class RoundTripTests(unittest.TestCase):
         self.psycopg = psycopg
         self.dsn = type(self).dsn
         self.meta = Path(tempfile.mkdtemp(prefix="zinglib-meta-"))
+        # Both the module attribute and the sidecar lookup have to point at the
+        # temp dir: `restore_sidecars` resolves the directory once and threads it
+        # through, so a patched module attribute alone would be bypassed.
         self._patch = patch.object(gmb, "meta_dir", lambda create=False: self.meta)
         self._patch.start()
         self.addCleanup(self._patch.stop)
         self._cleanup()
         self.addCleanup(self._cleanup)
+
+    def _all_arcids(self):
+        return [
+            self.arcid,
+            self.bare_arcid,
+            self.orphan_arcid,
+            self.moved_arcid,
+            self.twin_a_arcid,
+            self.twin_b_arcid,
+        ]
 
     def _cleanup(self):
         with self.psycopg.connect(self.dsn) as conn:
@@ -291,9 +480,19 @@ class RoundTripTests(unittest.TestCase):
                 # read_events cascades from works, so this is the whole cleanup.
                 cur.execute(
                     "DELETE FROM works WHERE arcid = ANY(%s::text[])",
-                    ([self.arcid, self.bare_arcid, self.orphan_arcid],),
+                    (self._all_arcids(),),
                 )
             conn.commit()
+
+    def _restore(self, **kwargs):
+        """Restore with a synthetic fingerprint map.
+
+        The fixture galleries have no files on disk, so the cover tier is driven
+        by an injected map instead of real images. `cover_hash_of` is the seam
+        the production code already threads through for exactly this reason.
+        """
+        kwargs.setdefault("cover_hash_of", lambda _rel: "")
+        return gmb.restore_sidecars(meta={"meta_dir": self.meta}, **kwargs)
 
     def _seed(self):
         with self.psycopg.connect(self.dsn) as conn:
@@ -388,13 +587,13 @@ class RoundTripTests(unittest.TestCase):
         self._wipe()
         self.assertFalse(self._row(self.arcid)["has_cover"])
 
-        preview = gmb.restore_sidecars(dry_run=True)
+        preview = self._restore(dry_run=True)
         self.assertEqual(preview["restored"], 0, "a dry run must not write")
         self.assertFalse(self._row(self.arcid)["has_cover"])
         self.assertEqual(preview["matched"], 1)
         self.assertIn(self.bare_arcid, [r["arcid"] for r in preview["no_sidecar"]])
 
-        report = gmb.restore_sidecars()
+        report = self._restore()
         self.assertTrue(report["ok"])
         self.assertEqual(report["restored"], 1)
         self.assertEqual(report["visual_restored"], 1)
@@ -423,7 +622,7 @@ class RoundTripTests(unittest.TestCase):
 
         # Restoring twice must be idempotent: the history insert is keyed on
         # (arcid, read_time) and the vectors are never overwritten.
-        again = gmb.restore_sidecars()
+        again = self._restore()
         self.assertEqual(again["history_rows"], 0)
         self.assertEqual(self._history(self.arcid), 2)
 
@@ -432,7 +631,7 @@ class RoundTripTests(unittest.TestCase):
         self.assertTrue(gmb.write_sidecar(self.arcid, model_id="selftest-siglip"))
         self._wipe()
         rows = []
-        report = gmb.restore_sidecars(detail_sink=lambda kind, item: rows.append(item))
+        report = self._restore(detail_sink=lambda kind, item: rows.append(item))
         self.assertEqual(report["restored"], 1)
 
         # The line a reader lands on first: "this gallery came back, from what".
@@ -472,7 +671,7 @@ class RoundTripTests(unittest.TestCase):
         os.utime(newer, (1_700_000_100, 1_700_000_100))
 
         self._wipe()
-        report = gmb.restore_sidecars()
+        report = self._restore()
 
         # The denominator must stay honest: one gallery, one match.
         self.assertEqual(report["matched"], 1, "two backups must not inflate matched")
@@ -500,7 +699,7 @@ class RoundTripTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        report = gmb.restore_sidecars()
+        report = self._restore()
         self.assertEqual(report["orphan_count"], 1)
         self.assertEqual(report["orphan_sidecars"][0]["arcid"], self.orphan_arcid)
         self.assertEqual(report["restored"], 0)
@@ -522,7 +721,7 @@ class RoundTripTests(unittest.TestCase):
             encoding="utf-8",
         )
         self._wipe()
-        report = gmb.restore_sidecars()
+        report = self._restore()
         self.assertEqual(report["matched"], 1)
         self.assertEqual(report["failed_count"], 0)
         self.assertTrue(self._row(self.arcid)["has_cover"])
@@ -547,10 +746,161 @@ class RoundTripTests(unittest.TestCase):
             encoding="utf-8",
         )
         self._wipe()
-        report = gmb.restore_sidecars()
+        report = self._restore()
         self.assertEqual(report["restored"], 1)
         self.assertTrue(self._row(self.arcid)["has_cover"])
         self.assertEqual(self._row(self.arcid)["raw"]["user_meta"]["title"], "From the backup")
+
+    # --- the move fallbacks -------------------------------------------------
+    #
+    # A move is the case the two exact tiers cannot survive: the path changed, so
+    # the arcid (a hash of it) changed with it, and `local_dir` no longer points
+    # anywhere the sidecar recognises. These tests cover the two inferences.
+
+    def _seed_row(self, arcid: str, rel: str, title: str) -> None:
+        with self.psycopg.connect(self.dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO works (arcid, title, tags, raw, local_dir, source, last_seen_at) "
+                    "VALUES (%s, %s, ARRAY[]::text[], '{}'::jsonb, %s, 'local', now()) "
+                    "ON CONFLICT (arcid) DO UPDATE SET local_dir = EXCLUDED.local_dir, "
+                    "source = 'local'",
+                    (arcid, title, rel),
+                )
+            conn.commit()
+
+    def _wipe_many(self, arcids) -> None:
+        with self.psycopg.connect(self.dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE works SET visual_embedding = NULL, page_visual_embedding = NULL, "
+                    "desc_embedding = NULL, cover_embedding_status = 'pending', "
+                    "raw = '{}'::jsonb WHERE arcid = ANY(%s::text[])",
+                    (list(arcids),),
+                )
+            conn.commit()
+
+    def _write_sidecar_file(self, arcid: str, local_dir: str, **extra) -> None:
+        body = {
+            "schema": gmb.SIDECAR_SCHEMA,
+            "arcid": arcid,
+            "local_dir": local_dir,
+            "siglip": {"dim": gmb.SIGLIP_DIM, "cover": COVER, "page": PAGE},
+            "text": {"dim": gmb.TEXT_DIM, "vector": TEXT},
+            "meta": {"title": "Survived the move"},
+            "history": [],
+        }
+        body.update(extra)
+        (self.meta / gmb.sidecar_filename(arcid)).write_text(
+            json.dumps(body), encoding="utf-8"
+        )
+
+    def test_restore_follows_the_cover_hash_when_the_folder_moved(self):
+        # The user moved the gallery, then re-scanned: the live row has the new
+        # path and a new arcid. Only page 1 is still the same file.
+        self._seed_row(self.moved_arcid, self.moved_rel, "Moved gallery")
+        self._write_sidecar_file(
+            "local-r44-old-path",
+            "r44-selftest/before-the-move",
+            cover_hash="shared-cover-fingerprint",
+        )
+        self._wipe_many([self.moved_arcid])
+
+        def fingerprint(rel):
+            return "shared-cover-fingerprint" if rel == self.moved_rel else ""
+
+        report = self._restore(cover_hash_of=fingerprint)
+
+        matched = [r for r in report["no_sidecar"] if r["arcid"] == self.moved_arcid]
+        self.assertEqual(matched, [], "the cover tier must have found this gallery")
+        self.assertEqual(report["matched_by_tier"][gmb.MATCH_BY_COVER_HASH], 1)
+        self.assertEqual(report["matched_by_tier"][gmb.MATCH_BY_PATH], 0)
+        row = self._row(self.moved_arcid)
+        self.assertTrue(row["has_cover"], "the vectors came back across the move")
+        self.assertEqual(row["raw"]["user_meta"]["title"], "Survived the move")
+
+    def test_restore_falls_back_to_a_unique_folder_name(self):
+        # No fingerprint available (an older sidecar, or an unreadable cover):
+        # the folder name is the only thing left, and it is unique here. The
+        # sidecar's own path must differ, or tier 1 would answer first and this
+        # would not be exercising the fallback at all.
+        self._seed_row(self.moved_arcid, "r44-selftest/box-b/moved-gallery-unique", "Moved gallery")
+        self._write_sidecar_file("local-r44-old-path", "r44-selftest/box-a/moved-gallery-unique")
+        self._wipe_many([self.moved_arcid])
+
+        report = self._restore()
+        self.assertEqual(report["matched_by_tier"][gmb.MATCH_BY_NAME], 1)
+        self.assertEqual(report["matched_by_tier"][gmb.MATCH_BY_PATH], 0)
+        self.assertTrue(self._row(self.moved_arcid)["has_cover"])
+
+    def test_a_duplicated_folder_name_is_left_as_an_orphan(self):
+        # Two galleries share a name. Guessing would put one gallery's vectors on
+        # the other, so the sidecar must be reported, not applied.
+        self._seed_row(self.twin_a_arcid, "r44-selftest/twin-alpha/shared-name", "Twin A")
+        self._seed_row(self.twin_b_arcid, "r44-selftest/twin-beta/shared-name", "Twin B")
+        self._write_sidecar_file("local-r44-old-path", "r44-selftest/gone/shared-name")
+        self._wipe_many([self.twin_a_arcid, self.twin_b_arcid])
+
+        report = self._restore()
+        self.assertGreaterEqual(report["orphan_count"], 1)
+        orphan = [r for r in report["orphan_sidecars"] if r["arcid"] == "local-r44-old-path"]
+        self.assertEqual(len(orphan), 1)
+        self.assertEqual(orphan[0]["status"], "orphan")
+        self.assertIn("unique name", orphan[0]["reason"])
+        self.assertFalse(self._row(self.twin_a_arcid)["has_cover"])
+        self.assertFalse(self._row(self.twin_b_arcid)["has_cover"])
+
+    def test_a_written_sidecar_omits_an_unfingerprintable_cover(self):
+        # This fixture gallery has no files on disk, so page 1 cannot be read and
+        # the hash is "" -- which must be *omitted*, not stored. An empty string
+        # in the index would make every unfingerprintable gallery match every
+        # other one, which is worse than having no fallback at all.
+        self._seed()
+        self.assertTrue(
+            gmb.write_sidecar(
+                self.arcid, model_id="selftest-siglip", meta={"meta_dir": self.meta}
+            )
+        )
+        on_disk = json.loads(
+            (self.meta / gmb.sidecar_filename(self.arcid)).read_text(encoding="utf-8")
+        )
+        self.assertEqual(gmb.gallery_cover_hash(self.rel), "")
+        self.assertNotIn("cover_hash", on_disk)
+
+    def test_a_written_sidecar_records_a_readable_cover(self):
+        # And the positive half: when page 1 *is* readable, the fingerprint is
+        # written. Without this the fallback would ship silently disabled.
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "lib"
+            gallery = lib / self.rel
+            gallery.mkdir(parents=True)
+            (gallery / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"cover" * 200)
+            (gallery / "2.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"page2" * 200)
+            with patch.object(gmb, "LOCAL_LIB_DIR", lib):
+                digest = gmb.gallery_cover_hash(self.rel)
+                self.assertTrue(digest, "a readable page 1 must produce a fingerprint")
+                row = {
+                    "arcid": self.arcid,
+                    "local_dir": self.rel,
+                    "raw": {},
+                    "cover_vec": gmb.vector_literal(COVER),
+                    "page_vec": gmb.vector_literal(PAGE),
+                    "text_vec": "",
+                }
+                with patch.object(gmb, "_read_events_for", return_value=[]):
+                    payload = gmb.build_payload(row)
+            self.assertEqual(payload.get("cover_hash"), digest)
+
+    def test_write_sidecar_targets_the_overridden_directory(self):
+        # The `meta` override exists so a round trip cannot touch a real library;
+        # if it were ignored the file would land next to the user's galleries.
+        self._seed()
+        self.assertTrue(gmb.write_sidecar(self.arcid, meta={"meta_dir": self.meta}))
+        self.assertTrue((self.meta / gmb.sidecar_filename(self.arcid)).is_file())
+        self.assertEqual(
+            gmb.sidecar_path(self.arcid, meta={"meta_dir": self.meta}),
+            self.meta / gmb.sidecar_filename(self.arcid),
+        )
 
 
 if __name__ == "__main__":

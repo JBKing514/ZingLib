@@ -38,11 +38,19 @@ RECOVERY_ALLOWED_ENDPOINTS = {
 # stay open to every authenticated role: "administrator required" is about
 # touching the library, the global config and the process, not about a user
 # renaming themselves or changing their own password.
+#
+# `/api/auth/recovery-password-change` belongs here for the same reason: it
+# writes one account's `password_hash` and nothing else, and the account is
+# named by the *body*, not by the session -- which is precisely what lets a
+# locked-out administrator use it. It is not a hole: the caller must still hold
+# a valid session (the guard above has already checked that) and present a
+# recovery code that has never been used, which is burned on success.
 SELF_SERVICE_PATHS = {
     "/api/auth/account",
     "/api/auth/logout",
     "/api/auth/password",
     "/api/auth/profile",
+    "/api/auth/recovery-password-change",
     "/api/auth/verify-password",
 }
 

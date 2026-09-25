@@ -4,6 +4,7 @@
     @update:model-value="emit('update:modelValue', $event)"
     :rail="!mobile && rail"
     :width="280"
+    :temporary="mobile"
     class="app-sidebar-drawer"
   >
     <div class="drawer-brand px-3 py-4 d-flex align-center" style="min-height: 64px;">
@@ -25,7 +26,7 @@
         color="primary"
         rounded="lg"
         class="mb-1"
-        @click="emit('go-home', item.homeTab)"
+        @click="onNavClick('go-home', item.homeTab)"
       />
 
       <v-divider class="my-2" />
@@ -39,7 +40,7 @@
         color="primary"
         rounded="lg"
         class="mb-1"
-        @click="emit('go-tab', item.key)"
+        @click="onNavClick('go-tab', item.key)"
       />
     </v-list>
 
@@ -93,6 +94,17 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue", "update:rail", "go-tab", "go-home"]);
 
 const { mobile } = useDisplay();
+
+// One tap has to both navigate and put the drawer away. Emitting the route change
+// on its own left the drawer to close itself through the model round-trip, and on
+// a phone the overlay drawer's own close transition swallowed the first tap
+// (`inert` while it is momentarily inactive), so the user had to tap twice. Both
+// halves are written here, in the order the user means them: the destination is
+// chosen first, then the panel that carried the tap gets out of the way.
+function onNavClick(event, value) {
+  emit(event, value);
+  if (mobile.value) emit("update:modelValue", false);
+}
 
 const homeNavItems = computed(() => {
   return (props.navItems || []).filter((x) => String(x?.homeTab || "") !== "");

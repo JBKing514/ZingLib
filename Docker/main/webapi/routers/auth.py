@@ -6,6 +6,7 @@ from ..core.schemas import (
     AuthChangePasswordRequest,
     AuthDeleteAccountRequest,
     AuthLoginRequest,
+    AuthRecoveryPasswordChangeRequest,
     AuthRegisterRequest,
     AuthUpdateProfileRequest,
 )
@@ -297,6 +298,48 @@ def auth_password_update(req: AuthChangePasswordRequest, request: Request, respo
     cfg, _ = resolve_config()
     _auth_clear_cookie(response, cfg)
     return {"ok": True, "message": "password changed, please login again"}
+
+
+@router.post("/api/auth/recovery-password-change")
+def auth_recovery_password_change(req: AuthRecoveryPasswordChangeRequest) -> dict[str, Any]:
+    """Change a password with a recovery code instead of the old password.
+
+    This is the "I still cannot get in" path taken from *inside* the app: the
+    user is signed in (or in recovery mode) but cannot recall the password, so
+    the change dialog offers the option to prove control with a recovery code
+    instead. The code is burned on success -- `check_recovery_login` removes the
+    matching hash from `DATA_UI_RECOVERY_CODES` -- and the write goes through
+    `force_change_password_by_username`, which needs no old password and revokes
+    the account's other sessions.
+
+    The caller is *not* signed out. Recovering control and then being thrown
+    back to the login gate would be a strange way to prove it, and the session
+    survives the change anyway (`force_change_password_by_username` revokes
+    every session *except* by uid, so the current one is dropped too -- the
+    response therefore tells the client to re-authenticate, and the front end
+    keeps the user on the account panel with a fresh login instead of
+    pretending the session is intact).
+    """
+    dsn = db_dsn()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="database is not configured")
+    username = str(req.username or "").strip()
+    code = str(req.recovery_code or "").strip()
+    if not username or not code:
+        raise HTTPException(status_code=400, detail="username and recovery code are required")
+    # Burn first: a wrong code must not consume one, but a right one must never
+    # be reusable even if the write below fails for another reason.
+    if not check_recovery_login(code):
+        raise HTTPException(status_code=401, detail="invalid recovery code")
+    try:
+        force_change_password_by_username(dsn, username, req.new_password, pepper=auth_pepper())
+    except (PasswordTooShortError, UsernameTooShortError) as e:
+        raise HTTPException(status_code=400, detail=_credential_error_detail(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"recovery password change failed: {e}")
+    return {"ok": True, "requires_login": True}
 
 
 @router.delete("/api/auth/account")

@@ -10,6 +10,16 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.0.3] - 2026-09-25
+
+- Danger-zone database settings no longer auto-save; a connection test must pass before they can be written
+- Account rename now requires the current password
+- Removed the unused OpenAI health check and its config key
+- The unlock switch and the account panel sit with the danger zone they belong to: the switch is glued to the zone's top edge, and the account (which keeps its own per-flow password gate) moved below it. The account panel had gone missing entirely, because a template binding was never returned from `setup()`.
+- A forgotten password can be recovered with a one-time recovery code. Tick "forgot password" in the change-password dialog to swap the current-password field for a recovery code; the code is burned on use and the password is rewritten without the old one, revoking the account's other sessions.
+- The reader's double-page spread opens on the side the reading direction starts from. Right-to-left used to draw the pair left-to-right (page 3 beside page 2 instead of page 4), because the two halves were laid out in page order rather than by side.
+- The page-turn animation follows the reading direction: a forward turn in right-to-left reading slides in from the left, opposite to left-to-right, instead of both directions using the left-to-right slide.
+
 ## [1.0.2] - 2026-09-25
 
 - Fix mobile gallery controls, page scaling, reader wheel tracking, sidebar gestures, and feedback access.

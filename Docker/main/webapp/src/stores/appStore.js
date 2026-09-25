@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import {
   changePassword,
+  changePasswordWithRecoveryCode,
   deleteAccount,
   getAuthBootstrap,
   getCsrfToken,
@@ -12,6 +13,7 @@ import {
   registerAdmin,
   setCsrfToken,
   updateProfile,
+  verifyPassword,
 } from "../api";
 import { useToastStore } from "./useToastStore";
 import { getInitialLang, t as translate } from "../i18n";
@@ -31,7 +33,12 @@ export const useAppStore = defineStore("app", () => {
   const authError = ref("");
   const authReady = ref(false);
   const authUser = ref({ uid: "", username: "", role: "" });
-  const accountForm = ref({ username: "", oldPassword: "", newPassword: "", newPassword2: "" });
+  // `username` mirrors the account and is **display-only** in the panel: the
+  // rename takes its new name from its own dialog, so an input that happens to
+  // be bound to this ref can never move the identity (see renameAccount). The
+  // dialog fields live in the view; only what has to survive a remount is here,
+  // so this ref stays a mirror of the account, not a scratch pad for forms.
+  const accountForm = ref({ username: "" });
 
   const isRecoveryMode = computed(() => String(authUser.value.role || "").toLowerCase() === "recovery");
 
@@ -139,64 +146,161 @@ export const useAppStore = defineStore("app", () => {
     if (_afterLogout) _afterLogout();
   }
 
-  async function updateAccountUsername() {
+  /**
+   * Verify the *current* password against the account that is logged in.
+   *
+   * Every account-level action below is gated on this: an identity change (the
+   * username keys the login form, the recovery record and every stored session)
+   * and a destructive change (delete) both need a fresh credential check, and a
+   * single click is not one. Shared here so the three flows cannot drift into
+   * three slightly different gates.
+   *
+   * Returns true on success, false on failure -- and the failure is already
+   * surfaced as a toast, so callers only branch, never re-report.
+   */
+  async function verifyCurrentPassword(password) {
+    const currentName = String(authUser.value.username || "").trim();
+    const typed = String(password || "").trim();
+    if (!typed) {
+      toast.warning(_t("auth.profile.confirm_required"));
+      return false;
+    }
     try {
-      const res = await updateProfile(accountForm.value.username);
+      await verifyPassword(currentName, typed);
+      return true;
+    } catch (e) {
+      toast.warning(apiErrorMessage(e, t));
+      return false;
+    }
+  }
+
+  /**
+   * Rename the account, but only after the current password has been verified.
+   *
+   * The username is display-only in the panel and arrives here as an argument
+   * (the dialog's own field), so a rename can never happen as a side effect of
+   * editing a bound input. `currentPassword` is the value typed into the
+   * dialog's gate field -- verified against the *current* username before the
+   * new name is written, so it cannot be satisfied by the new name's password.
+   */
+  async function renameAccount(currentPassword, nextUsername) {
+    const nextName = String(nextUsername || "").trim();
+    const currentName = String(authUser.value.username || "").trim();
+    if (!nextName) {
+      toast.warning(_t("auth.profile.username_required"));
+      return false;
+    }
+    if (nextName === currentName) {
+      toast.warning(_t("auth.profile.updated"));
+      return true;
+    }
+    if (!(await verifyCurrentPassword(currentPassword))) return false;
+    try {
+      const res = await updateProfile(nextName);
       authUser.value = res.user || authUser.value;
       accountForm.value.username = String(authUser.value.username || "");
       toast.success(_t("auth.profile.updated"));
+      return true;
     } catch (e) {
-      // Account actions answer with a structured credential error for the cases
-      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
-      // too-short password). `String(detail)` would render "[object Object]"
-      // instead of the localised hint, so route these through the same helper the
-      // login and setup paths use.
       toast.warning(apiErrorMessage(e, t));
+      return false;
     }
   }
 
-  async function updateAccountPassword() {
-    if (String(accountForm.value.newPassword || "") !== String(accountForm.value.newPassword2 || "")) {
+  /**
+   * Change the password, gated on the current one -- or on a recovery code.
+   *
+   * A separate "verify" step (the dialog's first page) proves the old password
+   * before the new one is even typed, so the two-field mismatch can only be
+   * reported after the gate is open. The account is signed out afterwards: the
+   * stored session was issued under the old credential.
+   *
+   * `opts.useRecoveryCode` swaps the gate: the value typed into the gate field
+   * is then a burn-after-use recovery code, the server writes the password
+   * without ever seeing the old one, and every session of that account is
+   * revoked -- including this one. The user is therefore signed out on this
+   * path too, for a different reason: there is no longer a session to keep.
+   * That is the honest outcome, and regaining control is what the flow was for.
+   */
+  async function changeAccountPassword(currentPassword, newPassword, newPassword2, opts = {}) {
+    if (String(newPassword || "") !== String(newPassword2 || "")) {
       toast.warning(_t("auth.profile.password_mismatch"));
-      return;
+      return false;
     }
+    const username = String(authUser.value.username || "").trim();
+    if (opts && opts.useRecoveryCode) {
+      const code = String(currentPassword || "").trim();
+      if (!code) {
+        toast.warning(_t("auth.profile.recovery_code_required"));
+        return false;
+      }
+      try {
+        await changePasswordWithRecoveryCode(username, code, String(newPassword || ""));
+        toast.success(_t("auth.profile.password_changed"));
+        await logoutNow();
+        return true;
+      } catch (e) {
+        toast.warning(apiErrorMessage(e, t));
+        return false;
+      }
+    }
+    if (!(await verifyCurrentPassword(currentPassword))) return false;
     try {
+      // Recovery mode has no old password to send (the server issues the
+      // recovery session without one), and the recovery flow already proved
+      // itself by getting in. The normal path sends what was just verified.
       const isRecovery = String(authUser.value.role || "").toLowerCase() === "recovery";
       await changePassword(
-        isRecovery ? "" : accountForm.value.oldPassword,
-        accountForm.value.newPassword,
-        accountForm.value.username,
+        isRecovery ? "" : String(currentPassword || ""),
+        String(newPassword || ""),
+        username,
       );
       toast.success(_t("auth.profile.password_changed"));
-      accountForm.value.oldPassword = "";
-      accountForm.value.newPassword = "";
-      accountForm.value.newPassword2 = "";
       await logoutNow();
+      return true;
     } catch (e) {
-      // Account actions answer with a structured credential error for the cases
-      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
-      // too-short password). `String(detail)` would render "[object Object]"
-      // instead of the localised hint, so route these through the same helper the
-      // login and setup paths use.
       toast.warning(apiErrorMessage(e, t));
+      return false;
     }
   }
 
+  /**
+   * Delete the account, then hand the instance back to the setup wizard.
+   *
+   * The backend clears `initialized` / `user_configured` alongside the row, so
+   * the *only* honest thing to show afterwards is the wizard asking for a new
+   * administrator. Showing the login gate instead would strand the user on a
+   * form that has nothing left to authenticate against -- which is exactly what
+   * `logoutNow()` does, so this path deliberately does not use it: it drops the
+   * session, then re-runs `bootstrap()`, whose `configured === false` branch is
+   * what raises the wizard.
+   */
   async function deleteAccountNow(password) {
-    const pwd = String(password || prompt(_t("auth.profile.delete_confirm")) || "").trim();
-    if (!pwd) return;
+    const pwd = String(password || "").trim();
+    if (!pwd) {
+      toast.warning(_t("auth.profile.confirm_required"));
+      return false;
+    }
     try {
       await deleteAccount(pwd);
       toast.success(_t("auth.profile.deleted"));
-      await logoutNow();
     } catch (e) {
-      // Account actions answer with a structured credential error for the cases
-      // the user can actually fix (`{code, field, min_length, message}`, e.g. a
-      // too-short password). `String(detail)` would render "[object Object]"
-      // instead of the localised hint, so route these through the same helper the
-      // login and setup paths use.
       toast.warning(apiErrorMessage(e, t));
+      return false;
     }
+    // Session is gone server-side; clear the client's copy before asking the
+    // server what the instance looks like now.
+    setCsrfToken("");
+    authUser.value = {};
+    accountForm.value = { username: "" };
+    showAuthGate.value = false;
+    if (_afterLogout) _afterLogout();
+    await bootstrap();
+    // Belt and braces: if the bootstrap round trip failed (server hiccup) the
+    // instance is still unconfigured, so the wizard is the correct fallback
+    // rather than a login form with no account behind it.
+    if (!showSetupWizard.value && !showAuthGate.value) showSetupWizard.value = true;
+    return true;
   }
 
   function openSetupWizardManual() {
@@ -223,8 +327,9 @@ export const useAppStore = defineStore("app", () => {
     registerNow,
     loginNow,
     logoutNow,
-    updateAccountUsername,
-    updateAccountPassword,
+    verifyCurrentPassword,
+    renameAccount,
+    changeAccountPassword,
     deleteAccountNow,
     openSetupWizardManual,
     closeSetupWizard,

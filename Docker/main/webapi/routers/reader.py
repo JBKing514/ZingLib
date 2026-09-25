@@ -29,6 +29,15 @@ _reader_sessions: dict[str, dict[str, Any]] = {}
 _reader_session_ttl_s = 1800.0
 _reader_session_max_cache_pages = 48
 
+# The nav wheel's thumbnails get their own cache, deliberately separate from the
+# session's page cache. Sharing the session cache made a drag push the reader's
+# preloaded full-size neighbours out of `_reader_trim_cache`; keeping them apart
+# means a thumbnail is still built only once per page, but never at the reader's
+# expense. Bounded by count, not by arcid, so it cannot grow with the library.
+_reader_wheel_thumb_lock = asyncio.Lock()
+_reader_wheel_thumb_cache: dict[tuple[str, int, str], tuple[bytes, str]] = {}
+_reader_wheel_thumb_max = 256
+
 
 def invalidate_reader_caches(arcid: str = "") -> None:
     """Drop cached reader state for one gallery, or all of it when arcid is "".
@@ -47,9 +56,12 @@ def invalidate_reader_caches(arcid: str = "") -> None:
     key = str(arcid or "").strip()
     if not key:
         _reader_manifest_cache.clear()
+        _reader_wheel_thumb_cache.clear()
         doomed = list(_reader_sessions.keys())
     else:
         _reader_manifest_cache.pop(key, None)
+        for cache_key in [k for k in _reader_wheel_thumb_cache if k[0] == key]:
+            _reader_wheel_thumb_cache.pop(cache_key, None)
         doomed = [
             sid for sid, session in _reader_sessions.items()
             if isinstance(session, dict) and str(session.get("arcid") or "") == key
@@ -67,11 +79,16 @@ def _normalize_reader_quality_mode(raw: Any, cfg: dict[str, Any] | None = None) 
     text = str(raw or "").strip().lower()
     if not text and isinstance(cfg, dict):
         text = str(cfg.get("READER_IMAGE_QUALITY_MODE") or "high").strip().lower()
-    return text if text in {"low", "mid", "high", "original"} else "high"
+    return text if text in {"thumb", "low", "mid", "high", "original"} else "high"
 
 
 def _reader_quality_spec(mode: str) -> tuple[int, int] | None:
+    # `thumb` is not a reading quality: it is the nav wheel's strip. It has to be
+    # far cheaper than `low` (360px) because a single drag can ask for dozens of
+    # them at once, and it is never shown larger than a thumbnail, so the detail
+    # `low` keeps would be thrown away by the browser anyway.
     return {
+        "thumb": (200, 55),
         "low": (360, 60),
         "mid": (720, 75),
         "high": (1080, 85),
@@ -254,6 +271,38 @@ def _reader_trim_cache(session: dict[str, Any]) -> None:
     to_drop = len(cache) - _reader_session_max_cache_pages
     for k, _ in rows[: max(0, to_drop)]:
         cache.pop(int(k), None)
+
+
+def _reader_trim_wheel_thumb_cache() -> None:
+    """Bound the wheel cache by count. Plain dicts, so this is safe to call under
+    the GIL from the sync trim path and from the async route alike."""
+    overflow = len(_reader_wheel_thumb_cache) - _reader_wheel_thumb_max
+    if overflow <= 0:
+        return
+    for cache_key in list(_reader_wheel_thumb_cache.keys())[:overflow]:
+        _reader_wheel_thumb_cache.pop(cache_key, None)
+
+
+async def _reader_wheel_thumb_bytes(arcid: str, page_path: str, page_no: int) -> tuple[bytes, str]:
+    """The wheel's copy of one page, built once and kept out of the session cache.
+
+    A drag asks for the same handful of pages over and over, so the decompression
+    is done once; because this cache is separate, those builds never evict the
+    full-size pages the reader is actually reading.
+    """
+    cache_key = (str(arcid or "").strip(), int(page_no), "thumb")
+    async with _reader_wheel_thumb_lock:
+        hit = _reader_wheel_thumb_cache.get(cache_key)
+        if isinstance(hit, tuple) and hit:
+            return hit[0], hit[1]
+    data, ctype = await _fetch_reader_page_bytes(arcid, page_path)
+    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, "thumb")
+    entry = (bytes(transformed or b""), str(media_type or "image/webp"))
+    if entry[0]:
+        async with _reader_wheel_thumb_lock:
+            _reader_wheel_thumb_cache[cache_key] = entry
+            _reader_trim_wheel_thumb_cache()
+    return entry
 
 
 def _reader_session_view(session: dict[str, Any]) -> dict[str, Any]:
@@ -519,6 +568,16 @@ async def reader_session_page(session_id: str, index: int, mode: str = Query(def
     if idx < 1:
         raise HTTPException(status_code=400, detail="index must be >= 1")
 
+    cfg, _ = resolve_config()
+    safe_mode = _normalize_reader_quality_mode(mode, cfg)
+    # The nav wheel's strip rides this same route, but it must not behave like a
+    # reading request: a drag can ask for dozens of pages at once, and if those
+    # ran through the session cache they would move the cursor, grow the cache
+    # with pages the reader is not on, and evict the full-size neighbours the
+    # session had already preloaded. A thumb is therefore read-only: no cursor
+    # move, no cache write, no trim.
+    is_thumb = safe_mode == "thumb"
+
     arcid = ""
     page_path = ""
     cached_data: bytes | None = None
@@ -532,8 +591,9 @@ async def reader_session_page(session_id: str, index: int, mode: str = Query(def
         total = max(1, int(session.get("page_count") or 1))
         if idx > total:
             raise HTTPException(status_code=404, detail="page out of range")
-        session["cursor"] = _reader_page(idx, total)
-        session["last_touch"] = now_ts
+        if not is_thumb:
+            session["cursor"] = _reader_page(idx, total)
+            session["last_touch"] = now_ts
         cache_obj = session.get("cache")
         cache: dict[int, dict[str, Any]] = cache_obj if isinstance(cache_obj, dict) else {}
         row = cache.get(idx)
@@ -546,9 +606,14 @@ async def reader_session_page(session_id: str, index: int, mode: str = Query(def
         page_path = str(pages[idx - 1] or "").strip() if idx - 1 < len(pages) else ""
         arcid = str(session.get("arcid") or "").strip()
 
+    if is_thumb:
+        # Read-only path: the wheel's pages come from their own cache and never
+        # enter (or evict from) the session's full-size cache.
+        thumb, thumb_type = await _reader_wheel_thumb_bytes(arcid, page_path, idx)
+        return Response(content=thumb, media_type=thumb_type, headers={"X-Reader-Session-Cache": "THUMB"})
+
     if cached_data is not None and cached_data:
-        cfg, _ = resolve_config()
-        transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, cached_data, cached_ctype, _normalize_reader_quality_mode(mode, cfg))
+        transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, cached_data, cached_ctype, safe_mode)
         return Response(content=transformed, media_type=media_type, headers={"X-Reader-Session-Cache": "HIT"})
 
     data, ctype = await _fetch_reader_page_bytes(arcid, page_path)
@@ -566,8 +631,7 @@ async def reader_session_page(session_id: str, index: int, mode: str = Query(def
             session["cache"] = cache
             session["error"] = ""
             _reader_trim_cache(session)
-    cfg, _ = resolve_config()
-    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, _normalize_reader_quality_mode(mode, cfg))
+    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, safe_mode)
     return Response(content=transformed, media_type=media_type, headers={"X-Reader-Session-Cache": "MISS"})
 
 
@@ -585,9 +649,15 @@ async def reader_page(arcid: str, index: int, mode: str = Query(default="")) -> 
     page_path = str(pages[int(index) - 1] or "").strip()
     if not page_path:
         raise HTTPException(status_code=404, detail="page path missing")
-    data, ctype = await _fetch_reader_page_bytes(safe_arcid, page_path)
     cfg, _ = resolve_config()
-    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, _normalize_reader_quality_mode(mode, cfg))
+    safe_mode = _normalize_reader_quality_mode(mode, cfg)
+    # Same wheel strip as the session route, for the case where the reader has no
+    # session id yet: served from the shared wheel cache so the two routes agree.
+    if safe_mode == "thumb":
+        thumb, thumb_type = await _reader_wheel_thumb_bytes(safe_arcid, page_path, int(index))
+        return Response(content=thumb, media_type=thumb_type)
+    data, ctype = await _fetch_reader_page_bytes(safe_arcid, page_path)
+    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, safe_mode)
     return Response(content=transformed, media_type=media_type)
 
 

@@ -21,7 +21,7 @@
           class="wheel-item"
           :class="{ active: Number(entry.page) === cursorPageSafe, current: Number(entry.page) === currentPage }"
           :style="wheelItemStyle(entry.page)"
-          @click="$emit('jump-to-page', Number(entry.page || 1))"
+          @click="onThumbClick(entry, $event)"
         >
           <img v-if="!canUseSprite(entry)" :src="String(entry.src || '')" alt="thumb" class="wheel-thumb" loading="lazy" />
           <div v-else class="wheel-thumb wheel-thumb-sprite" :style="wheelSpriteStyle(entry)" />
@@ -54,7 +54,7 @@
 
 <script setup>
 import { computed, ref } from "vue";
-import { pageForWheelDrag } from "../../utils/readerWheelDrag";
+import { WHEEL_DRAG_THRESHOLD_PX, pageForWheelDrag } from "../../utils/readerWheelDrag";
 
 const props = defineProps({
   currentPage: { type: Number, required: true },
@@ -71,7 +71,18 @@ const props = defineProps({
 
 const emit = defineEmits(["jump-to-page", "preview-page"]);
 
-const dragState = ref({ active: false, pointerId: -1, x: 0, y: 0, page: 1, emittedPage: 1 });
+const dragState = ref({
+  active: false,
+  pointerId: -1,
+  x: 0,
+  y: 0,
+  page: 1,
+  emittedPage: 1,
+  captured: false,
+});
+// Set the moment a gesture becomes a real drag; consumed by the click that the
+// same gesture would otherwise synthesise on release.
+let draggedThisGesture = false;
 
 const cursorPageSafe = computed(() => {
   const max = Math.max(1, Number(props.totalPages || 1));
@@ -227,6 +238,12 @@ function onSliderChange(v) {
 function onWheelPointerDown(event) {
   if (event?.isPrimary === false) return;
   const pointerId = Number(event?.pointerId ?? -1);
+  // Deliberately NOT capturing here. A pointer captured on `pointerdown`
+  // retargets the matching `pointerup` to the capture element, and the browser
+  // derives the `click` target from that retargeted event -- so the `@click` on
+  // a thumbnail would never fire and a mouse click on the strip would do
+  // nothing. Capture is deferred to the first move past the drag threshold,
+  // where a click can no longer be the outcome anyway.
   dragState.value = {
     active: true,
     pointerId,
@@ -234,34 +251,74 @@ function onWheelPointerDown(event) {
     y: Number(event?.clientY || 0),
     page: Number(cursorPageSafe.value || 1),
     emittedPage: Number(cursorPageSafe.value || 1),
+    captured: false,
   };
-  event?.currentTarget?.setPointerCapture?.(pointerId);
 }
 
 function onWheelPointerMove(event) {
   const state = dragState.value;
   if (!state.active || Number(event?.pointerId ?? -1) !== state.pointerId) return;
+  const currentX = Number(event?.clientX || 0);
+  const currentY = Number(event?.clientY || 0);
+  let origin = state;
+  if (!state.captured) {
+    const travel = Math.hypot(currentX - state.x, currentY - state.y);
+    if (travel < WHEEL_DRAG_THRESHOLD_PX) return;
+    // From here on this is a drag, not a tap: take the pointer so the strip
+    // keeps tracking even when the finger leaves it. Falling back to the event
+    // target keeps a stray move working in environments without capture.
+    const target = event?.currentTarget || event?.target;
+    try {
+      target?.setPointerCapture?.(state.pointerId);
+    } catch {
+      // A capture that fails is not fatal: the move handler still tracks.
+    }
+    origin = { ...state, captured: true };
+    dragState.value = origin;
+  }
   event?.preventDefault?.();
   const next = pageForWheelDrag({
-    startPage: state.page,
-    startX: state.x,
-    startY: state.y,
-    currentX: Number(event?.clientX || 0),
-    currentY: Number(event?.clientY || 0),
+    startPage: origin.page,
+    startX: origin.x,
+    startY: origin.y,
+    currentX,
+    currentY,
     totalPages: props.totalPages,
     position: props.wheelPosition,
     rtl: props.rtl,
   });
-  if (next === state.emittedPage) return;
-  dragState.value = { ...state, emittedPage: next };
+  if (next === origin.emittedPage) return;
+  draggedThisGesture = true;
+  dragState.value = { ...origin, emittedPage: next };
   emit("preview-page", next);
 }
 
 function onWheelPointerEnd(event) {
   const state = dragState.value;
   if (!state.active || Number(event?.pointerId ?? -1) !== state.pointerId) return;
-  event?.currentTarget?.releasePointerCapture?.(state.pointerId);
-  dragState.value = { ...state, active: false };
+  if (state.captured) {
+    try {
+      event?.currentTarget?.releasePointerCapture?.(state.pointerId);
+    } catch {
+      // The element can already be gone (strip rebuilt mid-drag); ignore.
+    }
+  }
+  // A release that never passed the drag threshold is a tap: the `click` it
+  // produces is left alone so it reaches the thumbnail's own handler.
+  dragState.value = { ...state, active: false, captured: false };
+}
+
+// The drag lives on the strip, but the `click` belongs to the thumbnail. Once a
+// drag has actually started, the click the browser synthesises on release must
+// not also jump a page -- that would make one gesture move twice.
+function onThumbClick(entry, event) {
+  if (draggedThisGesture) {
+    draggedThisGesture = false;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    return;
+  }
+  emit("jump-to-page", Number(entry?.page || 1));
 }
 
 function onWheelMouse(event) {

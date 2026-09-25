@@ -98,6 +98,10 @@ useSidebarSwipe({
   drawer: toRef(ui, "drawer"),
   rail: toRef(ui, "rail"),
   enabled: sidebarSwipeEnabled,
+  // The dashboard's long-press picker is scrubbed by a horizontal drag, i.e. the
+  // same gesture that opens the sidebar. While it is up, that drag belongs to
+  // the picker and the shell must not act on it.
+  longPressActive: toRef(dashboardStore, "longPressPickerActive"),
 });
 
 function onSidebarGoTab(key) {

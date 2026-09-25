@@ -114,6 +114,22 @@ export async function changePassword(oldPassword, newPassword, username = "") {
   return data;
 }
 
+/**
+ * Change a password with a burn-after-use recovery code instead of the old one.
+ *
+ * Separate endpoint rather than a flag on `changePassword`: the two take
+ * different credentials, are allowed to different roles, and the code has a
+ * side effect (it is consumed) that the normal path must never risk.
+ */
+export async function changePasswordWithRecoveryCode(username, recoveryCode, newPassword) {
+  const { data } = await api.post("/auth/recovery-password-change", {
+    username,
+    recovery_code: recoveryCode,
+    new_password: newPassword,
+  });
+  return data;
+}
+
 export async function verifyPassword(username, password) {
   const { data } = await api.post("/auth/verify-password", { username, password });
   return data;

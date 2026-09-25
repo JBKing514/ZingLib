@@ -3,7 +3,7 @@ import { defineStore } from "pinia";
 import { getHealth, getSchedule, getTasks, runTask, updateSchedule } from "../api";
 
 export const useControlStore = defineStore("control", () => {
-  const health = ref({ database: {}, services: {} });
+  const health = ref({ database: {} });
   const healthLoading = ref(false);
   const schedule = ref({});
   const scheduleVisible = computed(() => {
@@ -79,15 +79,16 @@ export const useControlStore = defineStore("control", () => {
     try {
       health.value = await getHealth();
     } catch (e) {
+      // Only the database branch is rendered (ControlPage shows
+      // `health.database.error`), so an unreachable API is reported there rather
+      // than on a `services.llm` slot nothing draws.
       const reason = String(e?.response?.data?.detail || e?.message || e || "unreachable");
       health.value = {
         ...(health.value || {}),
-        services: {
-          ...(health.value?.services || {}),
-          llm: {
-            ok: false,
-            message: reason,
-          },
+        database: {
+          ...(health.value?.database || {}),
+          ok: false,
+          error: reason,
         },
       };
     } finally {

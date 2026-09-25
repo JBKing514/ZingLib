@@ -80,6 +80,12 @@ export const useDashboardStore = defineStore("dashboard", () => {
   const isMobile = ref(false);
   const quickSearchOpen = ref(false);
   const showScrollQuickActions = ref(false);
+  // Raised for as long as the dashboard's long-press row picker owns the
+  // pointer. The picker is scrubbed by a horizontal drag on a card, which is the
+  // exact gesture the shell reads as "pull the sidebar out" -- so the shell has
+  // to stand down while this is true. Lives in the store because the gesture is
+  // owned by MainLayout, not by the page that opens the picker.
+  const longPressPickerActive = ref(false);
   const lastWindowScrollY = ref(0);
   const pageCountCache = ref({});
   const pageCountLoading = ref({});
@@ -1253,6 +1259,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     isMobile,
     quickSearchOpen,
     showScrollQuickActions,
+    longPressPickerActive,
     lastWindowScrollY,
     localCategoryDefs: categoryDefs,
     pinnedHomeFilterCategoryDefs,

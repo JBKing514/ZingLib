@@ -13,7 +13,7 @@ from ..core.config_values import normalize_value as _normalize_value
 from ..core.constants import APP_CONFIG_FILE, CONFIG_SPECS, RUNTIME_DIR, TRANSLATION_DIR
 from ..core.runtime_state import model_dl_lock, model_dl_state
 from ..core.schemas import ConfigUpdateRequest, ProviderModelsRequest, SetupValidateDbRequest
-from ..services.ai_provider import _provider_models, check_http
+from ..services.ai_provider import _provider_models
 from ..services.auth_service import bootstrap_status as auth_bootstrap_status
 from ..services.auth_service import set_initialized
 from ..services.config_service import (
@@ -160,18 +160,13 @@ def health() -> dict[str, Any]:
     cfg, _ = resolve_config()
     payload = _db_health_payload(cfg)
 
-    openai_health = str(cfg.get("OPENAI_HEALTH_URL", "")).strip()
-    llm_base = str(cfg.get("LLM_API_BASE", "")).strip()
-
-    llm = {"ok": None, "message": "n/a"}
-    if openai_health:
-        ok_llm, msg_llm = check_http(openai_health)
-        llm = {"ok": ok_llm, "message": msg_llm}
-    elif llm_base:
-        models, err = _provider_models(llm_base, str(cfg.get("LLM_API_KEY", "")))
-        llm = {"ok": bool(models), "message": f"models={len(models)}" if models else (err or "no models")}
-
-    payload["services"] = {"llm": llm}
+    # `services.llm` used to report a probe against OPENAI_HEALTH_URL. Nothing
+    # ever rendered it -- the only consumer, ControlPage, reads
+    # `health.database` alone -- so it was a network call on every poll whose
+    # result went nowhere, and it contradicted the project's "no outbound calls"
+    # rule. The field is gone rather than left as a dead key: an empty payload
+    # slot is an invitation to re-wire it by accident.
+    payload["services"] = {}
     return payload
 
 
@@ -330,10 +325,11 @@ def translation_status() -> dict[str, Any]:
         "tag_namespaces": int(info.get("tag_namespaces") or 0),
         "tags": int(info.get("tags") or 0),
     }
+    # There is no remote repository behind this: the table is maintained either
+    # by uploading a JSON glossary or by editing the file in place. The old
+    # `repo` / `head_sha` / `fetched_at` keys were hardcoded empties that no
+    # consumer ever read, so they are gone rather than kept as decor.
     return {
-        "repo": "",
-        "head_sha": "",
-        "fetched_at": "-",
         "manual_file": manual_info,
     }
 

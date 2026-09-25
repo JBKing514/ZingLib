@@ -2,11 +2,13 @@
   <v-tabs class="mb-4" color="primary">
     <v-tab value="general" :to="{ name: 'settings-general' }">{{ t("settings.tab.general") }}</v-tab>
     <template v-if="!appStore.isRecoveryMode">
+      <!-- Local library first: it is the screen that owns the library itself, so
+           it sits directly after the general options rather than at the end. -->
+      <v-tab value="local_lib" :to="{ name: 'settings-local-lib' }">{{ t("settings.tab.local_lib") }}</v-tab>
+      <v-tab value="reader" :to="{ name: 'settings-reader' }">{{ t("settings.tab.reader") }}</v-tab>
       <v-tab value="data_clean" :to="{ name: 'settings-data-clean' }">{{ t("settings.tab.data_clean") }}</v-tab>
       <v-tab value="search" :to="{ name: 'settings-search' }">{{ t("settings.tab.search") }}</v-tab>
-      <v-tab value="reader" :to="{ name: 'settings-reader' }">{{ t("settings.tab.reader") }}</v-tab>
       <v-tab value="other" :to="{ name: 'settings-other' }">{{ t("settings.tab.other") }}</v-tab>
-      <v-tab value="local_lib" :to="{ name: 'settings-local-lib' }">{{ t("settings.tab.local_lib") }}</v-tab>
     </template>
   </v-tabs>
 

@@ -16,10 +16,8 @@ import {
   getHomeTagSuggest,
   getProviderModels,
   getSiglipDownloadStatus,
-  getTranslationStatus,
   restoreAppConfigBackup,
   updateConfig,
-  uploadTranslationFile,
 } from "../api";
 import { useToastStore } from "./useToastStore";
 import { useControlStore } from "./controlStore";
@@ -47,8 +45,6 @@ export const useSettingsStore = defineStore("settings", () => {
   const llmModelOptions = ref([]);
   const ingestModelOptions = ref([]);
   const appConfigRestoreRef = ref(null);
-  const translationStatus = ref({ repo: "", head_sha: "", fetched_at: "-", manual_file: { path: "", exists: false, size: 0, updated_at: "-" } });
-  const translationUploadRef = ref(null);
   const modelStatus = ref({
     siglip: { path: "", size_mb: 0, usable: false },
     runtime_deps: { path: "", size_mb: 0, ready: false },
@@ -80,6 +76,33 @@ export const useSettingsStore = defineStore("settings", () => {
   let _autoSaveIdleTimer = null;
   let _autoSaveInFlight = null;
   let _autoSaveAgain = false;
+
+  /**
+   * Keys the auto-saver must never write on its own.
+   *
+   * The database coordinates are the one group where a wrong value does not
+   * degrade the app -- it takes the container down: every request after the
+   * write resolves the DSN from config, so pointing POSTGRES_HOST at nothing
+   * breaks the very instance that would have to fix it, and the value is
+   * already persisted by then. Typing a host one character at a time is enough
+   * to trigger it, because the debounce only waits 600ms.
+   *
+   * These keys are therefore *excluded from the diff* rather than merely
+   * debounced: they leave `config` on edit (so the form stays responsive) but
+   * never enter the auto-saver's dirty set. They can only land through
+   * `commitConfigKeys()`, which the database panel calls **after** a connection
+   * test has passed for exactly those values -- the same gate the setup wizard
+   * uses before it lets a fresh install continue.
+   */
+  const NO_AUTOSAVE_KEYS = Object.freeze([
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_SSLMODE",
+  ]);
+  const _noAutoSave = new Set(NO_AUTOSAVE_KEYS);
   const themeOptions = [
     { title: "Modern", value: "modern" },
     { title: "Ocean", value: "ocean" },
@@ -115,7 +138,7 @@ export const useSettingsStore = defineStore("settings", () => {
     return out;
   });
 
-  const health = computed(() => controlStore.health || { database: {}, services: {} });
+  const health = computed(() => controlStore.health || { database: {} });
   const accountForm = computed(() => appStore.accountForm);
   const builtinCategoryDefs = computed(() => BUILTIN_LOCAL_CATEGORY_DEFS.map((it) => ({ ...it })));
   const customCategoryDefs = computed(() => parseCustomCategoryConfig(config.value.LOCAL_LIB_CUSTOM_CATEGORIES || "[]"));
@@ -185,7 +208,6 @@ export const useSettingsStore = defineStore("settings", () => {
       POSTGRES_USER: "settings.pg.user",
       POSTGRES_PASSWORD: "settings.pg.password",
       POSTGRES_SSLMODE: "settings.pg.sslmode",
-      OPENAI_HEALTH_URL: "settings.openai.health",
       INGEST_API_KEY: "settings.provider.ingest_api_key",
       DATA_UI_TIMEZONE: "settings.ui.timezone",
       DATA_UI_THEME_MODE: "settings.ui.theme_mode",
@@ -240,8 +262,6 @@ export const useSettingsStore = defineStore("settings", () => {
       WORKER_ONLY_MISSING: "settings.worker.only_missing",
       LOCAL_LIB_SHOW_JPN_TITLE: "settings.local_lib.show_jpn_title",
       LOCAL_LIB_USE_TRANSLATED_TAGS: "settings.local_lib.use_translated_tags",
-      TAG_TRANSLATION_REPO: "settings.translation.repo",
-      TAG_TRANSLATION_AUTO_UPDATE_HOURS: "settings.translation.auto_update_hours",
       TEXT_INGEST_BATCH_SIZE: "settings.text_ingest.batch",
       LLM_API_BASE: "settings.provider.llm_api_base",
       LLM_API_KEY: "settings.provider.llm_api_key",
@@ -550,9 +570,83 @@ export const useSettingsStore = defineStore("settings", () => {
     const keys = new Set([...Object.keys(desired), ...Object.keys(base)]);
     const dirty = [];
     keys.forEach((key) => {
+      // Held back on purpose -- see NO_AUTOSAVE_KEYS. Filtering here (rather than
+      // in the watcher) keeps the rule in one place: every path that saves
+      // implicitly goes through this diff, so a new caller cannot forget it.
+      if (_noAutoSave.has(key)) return;
       if (_configValueChanged(key, desired[key], base[key])) dirty.push(key);
     });
     return { desired, dirty };
+  }
+
+  /**
+   * The dirty set for an *explicit* commit: same diff, but restricted to `keys`.
+   *
+   * Used by the database panel once a connection test has passed, so the write
+   * carries exactly the values that were tested -- never a neighbour that
+   * happened to be edited while the probe was in flight.
+   */
+  function _dirtyForKeys(keys) {
+    const desired = _desiredConfigValues();
+    const base = _savedConfig || {};
+    const wanted = new Set(keys || []);
+    const dirty = [];
+    wanted.forEach((key) => {
+      if (_configValueChanged(key, desired[key], base[key])) dirty.push(key);
+    });
+    return { desired, dirty };
+  }
+
+  /**
+   * Write a specific set of keys now, bypassing the auto-saver's exclusion.
+   *
+   * This is the *only* way the danger-zone keys reach the server. It still
+   * reconciles through `_markConfigSaved`, so a key it did not send stays dirty
+   * and is not silently marked as stored. Returns true on a landed write.
+   */
+  async function commitConfigKeys(keys) {
+    const list = Array.from(keys || []).filter((k) => _noAutoSave.has(k) || k);
+    const { desired, dirty } = _dirtyForKeys(list);
+    if (!dirty.length) return true;
+    const payload = {};
+    dirty.forEach((key) => { payload[key] = desired[key]; });
+    configSaveState.value = "saving";
+    configSaveError.value = "";
+    try {
+      const res = await updateConfig(payload);
+      if (res && res.db_pending) {
+        _markConfigSaved(dirty, desired);
+        configSaveState.value = "saved";
+        _scheduleConfigSaveIdle();
+        return true;
+      }
+      if (res && res.saved_db === false) {
+        configSaveState.value = "error";
+        configSaveError.value = String(res.db_error || "n/a");
+        notify(t("settings.autosave.failed", { reason: configSaveError.value }), "warning");
+        return false;
+      }
+      _markConfigSaved(dirty, desired);
+      configSaveState.value = "saved";
+      _scheduleConfigSaveIdle();
+      return true;
+    } catch (e) {
+      configSaveState.value = "error";
+      configSaveError.value = String(e?.response?.data?.detail || e?.message || e);
+      notify(configSaveError.value, "warning");
+      return false;
+    }
+  }
+
+  /**
+   * Take the current values of `keys` as "what the server has", without sending
+   * them. The danger-zone form uses this after a successful connection test:
+   * the tested values are authoritative, and marking them saved is what stops a
+   * later explicit commit from re-sending them.
+   */
+  function acceptConfigKeysAsSaved(keys) {
+    const desired = _desiredConfigValues();
+    _markConfigSaved(Array.from(keys || []), desired);
   }
 
   function _markConfigSaved(keys, desired) {
@@ -732,24 +826,6 @@ export const useSettingsStore = defineStore("settings", () => {
     }
   }
 
-  async function loadTranslationStatus() {
-    translationStatus.value = await getTranslationStatus();
-  }
-
-  async function onTranslationUploadChange(event) {
-    const file = event?.target?.files?.[0];
-    if (!file) return;
-    try {
-      await uploadTranslationFile(file);
-      notify(t("settings.translation.uploaded"), "success");
-      await loadTranslationStatus();
-    } catch (e) {
-      notify(String(e?.response?.data?.detail || e), "warning");
-    } finally {
-      if (translationUploadRef.value) translationUploadRef.value.value = "";
-    }
-  }
-
   async function loadModelStatus() {
     const res = await getModelStatus();
     if (res && typeof res === "object" && res.model) {
@@ -879,16 +955,23 @@ export const useSettingsStore = defineStore("settings", () => {
     appStore.openSetupWizardManual();
   }
 
-  async function updateAccountUsername() {
-    await appStore.updateAccountUsername();
+  // Account actions are password-gated flows driven by their own dialogs; the
+  // store only forwards, so the panel can reach them through the same spread it
+  // uses for everything else on this page.
+  async function verifyCurrentPassword(password) {
+    return appStore.verifyCurrentPassword(password);
   }
 
-  async function updateAccountPassword() {
-    await appStore.updateAccountPassword();
+  async function renameAccount(currentPassword, nextUsername) {
+    return appStore.renameAccount(currentPassword, nextUsername);
   }
 
-  async function deleteAccountNow() {
-    await appStore.deleteAccountNow();
+  async function changeAccountPassword(currentPassword, newPassword, newPassword2, opts = {}) {
+    return appStore.changeAccountPassword(currentPassword, newPassword, newPassword2, opts);
+  }
+
+  async function deleteAccountNow(password) {
+    return appStore.deleteAccountNow(password);
   }
 
   watch(() => config.value.SEARCH_TEXT_WEIGHT, () => normalizeSearchWeights("SEARCH_TEXT_WEIGHT", "SEARCH_VISUAL_WEIGHT", "SEARCH_TEXT_WEIGHT"));
@@ -982,8 +1065,6 @@ export const useSettingsStore = defineStore("settings", () => {
     llmModelOptions,
     ingestModelOptions,
     appConfigRestoreRef,
-    translationStatus,
-    translationUploadRef,
     modelStatus,
     dbHealth,
     dbHealthLoading,
@@ -1025,13 +1106,14 @@ export const useSettingsStore = defineStore("settings", () => {
     flushConfig,
     configSaveState,
     configSaveError,
+    commitConfigKeys,
+    acceptConfigKeysAsSaved,
+    NO_AUTOSAVE_KEYS,
     downloadAppConfigBackupAction,
     onAppConfigRestoreChange,
     reloadIngestModels,
     reloadLlmModels,
     refreshDbHealth,
-    loadTranslationStatus,
-    onTranslationUploadChange,
     loadModelStatus,
     pollSiglipTask,
     downloadSiglipAction,
@@ -1041,8 +1123,9 @@ export const useSettingsStore = defineStore("settings", () => {
     clearReadEventsAction,
     toggleSiglipWorkerEnabled,
     openSetupWizardManual,
-    updateAccountUsername,
-    updateAccountPassword,
+    verifyCurrentPassword,
+    renameAccount,
+    changeAccountPassword,
     deleteAccountNow,
   };
 });

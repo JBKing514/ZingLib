@@ -47,7 +47,6 @@ CONFIG_SPECS: dict[str, dict[str, Any]] = {
     "POSTGRES_PASSWORD": {"type": "text", "default": "", "secret": True},
     "POSTGRES_SSLMODE": {"type": "text", "default": "prefer"},
     "OPENAI_API_KEY": {"type": "text", "default": "", "secret": True},
-    "OPENAI_HEALTH_URL": {"type": "url", "default": ""},
     "DATA_UI_LANG": {"type": "text", "default": "zh"},
     "DATA_UI_TIMEZONE": {"type": "text", "default": "UTC"},
     "DATA_UI_THEME_MODE": {"type": "text", "default": "system"},
@@ -144,8 +143,6 @@ CONFIG_SPECS: dict[str, dict[str, Any]] = {
     "WORKER_BATCH": {"type": "int", "default": 32, "min": 1, "max": 512},
     "WORKER_SLEEP": {"type": "float", "default": 0.0, "min": 0.0, "max": 60.0},
     "WORKS_PAGE_SAMPLE_COUNT": {"type": "int", "default": 4, "min": 1, "max": 8},
-    "TAG_TRANSLATION_REPO": {"type": "text", "default": ""},
-    "TAG_TRANSLATION_AUTO_UPDATE_HOURS": {"type": "int", "default": 24, "min": 1, "max": 720},
     "PROMPT_TAG_EXTRACT_SYSTEM": {
         "type": "text",
         "default": "你是本地漫画库的标签检索助手。请将用户的自然语言查询映射到 allowed_tags 中最相关的标签。只能选择已提供的标签，并仅输出 {\"tags\": [...]} 格式的 JSON。",

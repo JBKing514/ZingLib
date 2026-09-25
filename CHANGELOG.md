@@ -10,6 +10,10 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.0.2] - 2026-09-25
+
+- Fix mobile gallery controls, page scaling, reader wheel tracking, sidebar gestures, and feedback access.
+
 ## [1.0.1] - 2026-09-24
 
 - Galleries under a folder named `migrated` are scanned and listed again. The name was skipped as a legacy import graveyard that nothing in the code creates any more, so real galleries under it were neither scanned nor shown in the file manager, with nothing on screen to explain the absence.

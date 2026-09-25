@@ -91,7 +91,6 @@
                 v-model="homeViewMode"
                 mandatory
                 variant="outlined"
-                divided
                 density="compact"
                 rounded="lg"
                 color="primary"
@@ -2137,6 +2136,19 @@ export default {
   margin-left: auto;
 }
 
+.home-view-toggle {
+  gap: 8px;
+  overflow: visible;
+  border: 0;
+  background: transparent !important;
+}
+
+.home-view-toggle :deep(.v-btn) {
+  min-width: 74px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.18) !important;
+  border-radius: 999px !important;
+}
+
 .mobile-action-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2289,6 +2301,10 @@ export default {
 .mobile-preview-fullscreen {
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  min-width: 0;
   z-index: 2500;
   background: rgba(var(--v-theme-background), 0.98);
   display: flex;
@@ -2329,6 +2345,7 @@ export default {
 
 .mobile-preview-body {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   padding: 0;
   display: flex;
@@ -2342,7 +2359,9 @@ export default {
 }
 
 .mobile-preview-body :deep(.preview-card) {
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   max-height: none;
   height: 100%;
   border-radius: 0;

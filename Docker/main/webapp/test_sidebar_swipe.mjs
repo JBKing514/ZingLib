@@ -13,7 +13,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { resolveSidebarSwipe, SIDEBAR_SWIPE_EDGE, SIDEBAR_SWIPE_TRAVEL } from "./src/composables/useSidebarSwipe.js";
+import {
+  resolveSidebarSwipe,
+  sidebarSwipeEdge,
+  SIDEBAR_SWIPE_EDGE_RATIO,
+  SIDEBAR_SWIPE_TRAVEL,
+} from "./src/composables/useSidebarSwipe.js";
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -27,21 +32,19 @@ const pull = (extra = {}) => ({
   drawerRight: 280,
   onCard: false,
   startX: 4,
+  viewportWidth: 360,
   dx: 90,
   dy: 6,
   ...extra,
 });
 
-test("a pull from the edge opens the drawer", () => {
-  // Literals, not `SIDEBAR_SWIPE_EDGE`: an expectation imported from the module
-  // under test moves with the constant, so retuning the zone (or deleting the
-  // constant) would keep this green. The gesture is defined in pixels of screen
-  // edge, and that is what the user can actually feel.
-  assert.equal(resolveSidebarSwipe(pull({ startX: 24 })), "open");
+test("a pull from the first third of the viewport opens the drawer", () => {
+  assert.equal(resolveSidebarSwipe(pull({ startX: 120 })), "open");
   // Exactly on the edge of the zone still counts; a pixel past it does not.
-  assert.equal(resolveSidebarSwipe(pull({ startX: 25 })), "");
-  assert.equal(resolveSidebarSwipe(pull({ startX: 120 })), "");
-  assert.ok(SIDEBAR_SWIPE_EDGE <= 32, `the edge zone stays reachable (${SIDEBAR_SWIPE_EDGE}px)`);
+  assert.equal(resolveSidebarSwipe(pull({ startX: 121 })), "");
+  assert.equal(sidebarSwipeEdge(360), 120);
+  assert.equal(sidebarSwipeEdge(900), 300);
+  assert.equal(SIDEBAR_SWIPE_EDGE_RATIO, 1 / 3);
   assert.ok(SIDEBAR_SWIPE_TRAVEL >= 40, `the travel threshold still rejects jitter (${SIDEBAR_SWIPE_TRAVEL}px)`);
 });
 
@@ -51,10 +54,9 @@ test("a pull out of the rail asks for the full sidebar, not nothing", () => {
   assert.equal(resolveSidebarSwipe(pull({ drawerOpen: true, railOn: false })), "");
 });
 
-test("a pull that starts on a gallery belongs to the gallery", () => {
-  // The long-press row picker scrubs a card's row horizontally; the shell must
-  // not steal that drag.
-  assert.equal(resolveSidebarSwipe(pull({ onCard: true })), "");
+test("the edge gesture also works where a dashboard card reaches the edge", () => {
+  assert.equal(resolveSidebarSwipe(pull({ onCard: true })), "open");
+  assert.equal(resolveSidebarSwipe(pull({ onCard: true, startX: 121 })), "");
 });
 
 test("a leftward drag pushes the drawer away when it is showing", () => {
@@ -94,6 +96,10 @@ test("the shell owns the gesture, and the dashboard owns none of it", () => {
   assert.doesNotMatch(dash, /v-touch/, "the tab swipe is gone, not just unbound");
   assert.doesNotMatch(dash, /swipeLeft|swipeRight|onItemsSwipe|_swipeTabsInScope|_swipeSuppressUntil|home-items-swipe-zone/);
   assert.doesNotMatch(dash, /useSidebarSwipe/, "one owner: the shell");
+
+  const swipe = read("./src/composables/useSidebarSwipe.js");
+  assert.match(swipe, /window\.addEventListener\("pointermove", onPointerMove/);
+  assert.match(swipe, /if \(action === "open"\) \{[\s\S]*?tracking = false;[\s\S]*?drawer\.value = true;/);
 });
 
 test("a blank tap in the tablet pane puts the preview away", () => {

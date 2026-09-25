@@ -913,6 +913,7 @@
   "status.down": "DOWN",
   "status.na": "N/A",
   "nav.compact": "紧凑",
+  "nav.feedback": "反馈问题",
   "nav.section.local": "本地库",
   "nav.section.favorite": "收藏",
   "nav.section.history": "历史",

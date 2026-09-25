@@ -43,10 +43,23 @@
       />
     </v-list>
 
-    <template #append v-if="!mobile">
+    <template #append>
       <v-divider />
       <div class="pa-2">
         <v-btn
+          block
+          variant="text"
+          color="medium-emphasis"
+          prepend-icon="mdi-bug-outline"
+          href="https://github.com/JBKing514/ZingLib/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="mb-1 justify-start"
+        >
+          <span v-if="mobile || !rail">{{ t('nav.feedback') }}</span>
+        </v-btn>
+        <v-btn
+          v-if="!mobile"
           block
           variant="text"
           color="medium-emphasis"

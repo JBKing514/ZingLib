@@ -11,9 +11,16 @@ import { onBeforeUnmount, onMounted } from "vue";
  * on a feed has nothing left to mean but the sidebar.
  */
 
-// Where the pull-out gesture may start. Every shell page keeps a ~24px gutter
-// (v-container pa-6), so the edge is reachable without starting on a gallery.
-export const SIDEBAR_SWIPE_EDGE = 24;
+// Keep the opening gesture clear of Android's own edge-back zone. A third of
+// the viewport is broad enough to start deliberately from page content.
+export const SIDEBAR_SWIPE_EDGE_RATIO = 1 / 3;
+export const SIDEBAR_SWIPE_EDGE_FALLBACK = 160;
+export function sidebarSwipeEdge(viewportWidth) {
+  const width = Number(viewportWidth);
+  return Number.isFinite(width) && width > 0
+    ? width * SIDEBAR_SWIPE_EDGE_RATIO
+    : SIDEBAR_SWIPE_EDGE_FALLBACK;
+}
 // A quarter of a phone's width: past the jitter of a scroll, short of a drag.
 export const SIDEBAR_SWIPE_TRAVEL = 56;
 // The drag has to be this much more horizontal than vertical to count.
@@ -53,8 +60,7 @@ export function resolveSidebarSwipe(input = {}) {
     // Rightward: pull it out. Already open at full width means there is nothing
     // to pull out, and the gesture must not start on a card or mid-page.
     if (input.drawerOpen && !input.railOn) return "";
-    if (input.onCard) return "";
-    if (Number(input.startX || 0) > SIDEBAR_SWIPE_EDGE) return "";
+    if (Number(input.startX || 0) > sidebarSwipeEdge(input.viewportWidth)) return "";
     return "open";
   }
 
@@ -77,6 +83,7 @@ function closestOf(target, selector) {
  */
 export function useSidebarSwipe({ drawer, rail, enabled }) {
   let tracking = false;
+  let pointerId = -1;
   let startX = 0;
   let startY = 0;
   let startEl = null;
@@ -89,27 +96,22 @@ export function useSidebarSwipe({ drawer, rail, enabled }) {
     return enabled ? !!enabled.value : true;
   }
 
-  function onTouchStart(event) {
+  function onPointerDown(event) {
     tracking = false;
     if (!canTrack()) return;
-    const touches = event?.touches || [];
-    // Two fingers is a pinch or a hand rest, not a drag on the chrome.
-    if (touches.length !== 1) return;
-    const touch = touches[0];
+    if (event?.isPrimary === false || !["touch", "pen"].includes(String(event?.pointerType || ""))) return;
     const target = event?.target || null;
     if (closestOf(target, BLOCKED_SELECTOR)) return;
-    startX = Number(touch.clientX || 0);
-    startY = Number(touch.clientY || 0);
+    pointerId = Number(event?.pointerId ?? -1);
+    startX = Number(event?.clientX || 0);
+    startY = Number(event?.clientY || 0);
     startEl = target;
     tracking = true;
   }
 
-  function onTouchEnd(event) {
-    if (!tracking) return;
-    tracking = false;
+  function onPointerMove(event) {
+    if (!tracking || Number(event?.pointerId ?? -1) !== pointerId) return;
     if (!canTrack()) return;
-    const touch = (event?.changedTouches || [])[0] || null;
-    if (!touch) return;
 
     const root = sidebarEl();
     const rect = root && typeof root.getBoundingClientRect === "function" ? root.getBoundingClientRect() : null;
@@ -120,9 +122,10 @@ export function useSidebarSwipe({ drawer, rail, enabled }) {
     const action = resolveSidebarSwipe({
       enabled: true,
       blocked: false,
-      dx: Number(touch.clientX || 0) - startX,
-      dy: Number(touch.clientY || 0) - startY,
+      dx: Number(event?.clientX || 0) - startX,
+      dy: Number(event?.clientY || 0) - startY,
       startX,
+      viewportWidth: Number(window.innerWidth || 0),
       drawerOpen: drawer ? !!drawer.value : false,
       railOn: rail ? !!rail.value : false,
       overlay,
@@ -131,29 +134,35 @@ export function useSidebarSwipe({ drawer, rail, enabled }) {
     });
 
     if (action === "open") {
+      tracking = false;
       if (drawer) drawer.value = true;
       // A deliberate pull means the full sidebar, not the compact rail.
       if (rail && rail.value) rail.value = false;
       return;
     }
     if (action === "close" && drawer) {
+      tracking = false;
       drawer.value = false;
     }
   }
 
-  function onTouchCancel() {
+  function onPointerEnd(event) {
+    if (Number(event?.pointerId ?? -1) !== pointerId) return;
     tracking = false;
+    pointerId = -1;
   }
 
   onMounted(() => {
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    window.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    window.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerup", onPointerEnd, { passive: true });
+    window.addEventListener("pointercancel", onPointerEnd, { passive: true });
   });
 
   onBeforeUnmount(() => {
-    window.removeEventListener("touchstart", onTouchStart);
-    window.removeEventListener("touchend", onTouchEnd);
-    window.removeEventListener("touchcancel", onTouchCancel);
+    window.removeEventListener("pointerdown", onPointerDown);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerEnd);
+    window.removeEventListener("pointercancel", onPointerEnd);
   });
 }

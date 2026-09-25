@@ -3,13 +3,17 @@
     class="wheel-shell"
     :class="`wheel-${wheelPosition}`"
     :style="shellStyle"
-    @touchstart.passive="onWheelTouchStart"
-    @touchmove.prevent="onWheelTouchMove"
     @wheel.prevent="onWheelMouse"
   >
     <div v-if="wheelPosition !== 'bottom'" class="wheel-side-mask" :class="`mask-${wheelPosition}`" />
 
-    <div class="wheel-track-clip">
+    <div
+      class="wheel-track-clip"
+      @pointerdown="onWheelPointerDown"
+      @pointermove="onWheelPointerMove"
+      @pointerup="onWheelPointerEnd"
+      @pointercancel="onWheelPointerEnd"
+    >
       <div class="wheel-track" :class="`wheel-track-${wheelPosition}`">
         <button
           v-for="entry in wheelPages"
@@ -50,6 +54,7 @@
 
 <script setup>
 import { computed, ref } from "vue";
+import { pageForWheelDrag } from "../../utils/readerWheelDrag";
 
 const props = defineProps({
   currentPage: { type: Number, required: true },
@@ -66,7 +71,7 @@ const props = defineProps({
 
 const emit = defineEmits(["jump-to-page", "preview-page"]);
 
-const touchAnchor = ref({ x: 0, y: 0, accum: 0 });
+const dragState = ref({ active: false, pointerId: -1, x: 0, y: 0, page: 1, emittedPage: 1 });
 
 const cursorPageSafe = computed(() => {
   const max = Math.max(1, Number(props.totalPages || 1));
@@ -208,12 +213,6 @@ function wheelItemStyle(page) {
   };
 }
 
-function onWheelTouchStart(event) {
-  const t = event?.changedTouches?.[0];
-  if (!t) return;
-  touchAnchor.value = { x: Number(t.clientX || 0), y: Number(t.clientY || 0), accum: 0 };
-}
-
 function previewStep(step) {
   const next = Math.max(1, Math.min(Number(props.totalPages || 1), Number(cursorPageSafe.value || 1) + step));
   if (next !== Number(cursorPageSafe.value || 1)) emit("preview-page", next);
@@ -225,20 +224,44 @@ function onSliderChange(v) {
   emit("preview-page", Math.max(1, Math.min(max, raw)));
 }
 
-function onWheelTouchMove(event) {
-  const t = event?.changedTouches?.[0];
-  if (!t) return;
-  const dx = Number(t.clientX || 0) - touchAnchor.value.x;
-  const dy = Number(t.clientY || 0) - touchAnchor.value.y;
-  let raw = props.wheelPosition === "bottom" ? -dx : -dy;
-  if (props.rtl && props.wheelPosition === "bottom") raw = -raw;
-  const total = touchAnchor.value.accum + raw;
-  const stepPx = props.wheelPosition === "bottom" ? 18 : 16;
-  const step = total > 0 ? Math.floor(total / stepPx) : Math.ceil(total / stepPx);
-  if (step !== 0) {
-    previewStep(step);
-    touchAnchor.value = { x: Number(t.clientX || 0), y: Number(t.clientY || 0), accum: total - step * stepPx };
-  }
+function onWheelPointerDown(event) {
+  if (event?.isPrimary === false) return;
+  const pointerId = Number(event?.pointerId ?? -1);
+  dragState.value = {
+    active: true,
+    pointerId,
+    x: Number(event?.clientX || 0),
+    y: Number(event?.clientY || 0),
+    page: Number(cursorPageSafe.value || 1),
+    emittedPage: Number(cursorPageSafe.value || 1),
+  };
+  event?.currentTarget?.setPointerCapture?.(pointerId);
+}
+
+function onWheelPointerMove(event) {
+  const state = dragState.value;
+  if (!state.active || Number(event?.pointerId ?? -1) !== state.pointerId) return;
+  event?.preventDefault?.();
+  const next = pageForWheelDrag({
+    startPage: state.page,
+    startX: state.x,
+    startY: state.y,
+    currentX: Number(event?.clientX || 0),
+    currentY: Number(event?.clientY || 0),
+    totalPages: props.totalPages,
+    position: props.wheelPosition,
+    rtl: props.rtl,
+  });
+  if (next === state.emittedPage) return;
+  dragState.value = { ...state, emittedPage: next };
+  emit("preview-page", next);
+}
+
+function onWheelPointerEnd(event) {
+  const state = dragState.value;
+  if (!state.active || Number(event?.pointerId ?? -1) !== state.pointerId) return;
+  event?.currentTarget?.releasePointerCapture?.(state.pointerId);
+  dragState.value = { ...state, active: false };
 }
 
 function onWheelMouse(event) {
@@ -352,6 +375,7 @@ function canUseSprite(entry) {
 .wheel-track-clip {
   pointer-events: auto;
   overflow: hidden;
+  touch-action: none;
 }
 
 .wheel-bottom .wheel-track-clip {

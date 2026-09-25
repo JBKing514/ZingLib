@@ -913,6 +913,7 @@
   "status.down": "DOWN",
   "status.na": "N/A",
   "nav.compact": "Compact",
+  "nav.feedback": "Report an issue",
   "nav.section.local": "Local Library",
   "nav.section.favorite": "Favorites",
   "nav.section.history": "History",

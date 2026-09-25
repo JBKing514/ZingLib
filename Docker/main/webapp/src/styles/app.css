@@ -1,6 +1,6 @@
 html {
   --zgl-page-zoom: 1;
-  font-size: calc(16px * var(--zgl-page-zoom));
+  font-size: 16px;
 }
 
 html,
@@ -11,11 +11,21 @@ body,
   margin: 0;
 }
 
+/* CSS zoom already gives the application a correspondingly smaller/larger
+   layout viewport. An inverse width would compensate twice, leaving a gutter
+   when zoomed in and overflowing the app bar when zoomed out. */
+#app {
+  zoom: var(--zgl-page-zoom);
+  width: 100%;
+  min-height: 100dvh;
+}
+
 .v-application {
   min-height: 100dvh !important;
 }
 
 .v-main {
+  touch-action: pan-y;
   background:
     radial-gradient(circle at 8% 12%, rgba(var(--v-theme-primary), 0.14), transparent 30%),
     radial-gradient(circle at 90% 8%, rgba(var(--v-theme-secondary), 0.12), transparent 28%),

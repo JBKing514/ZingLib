@@ -33,18 +33,38 @@ test("the wheel asks for its own cheap mode, not the reader's quality", () => {
   assert.match(page, /READER_IMAGE_QUALITY_MODE/);
 });
 
-test("a drag rebuilds the strip once it settles, not once per tick", () => {
+test("a drag settles normally but recenters before it outruns the strip", () => {
   const page = read("./src/views/ReaderPage.vue");
   // The slider cursor and the strip cursor are two things now.
   assert.match(page, /const wheelStripPage = ref\(1\);/);
   assert.match(page, /const WHEEL_STRIP_SETTLE_MS = 150;/);
   assert.match(page, /function onWheelPreviewPage\(page\) \{[\s\S]*?wheelCursorPage\.value = clamped;[\s\S]*?armWheelStripSettle\(\);/);
+  assert.match(page, /const recenterGap = Math\.max\(1, Number\(wheelRange\.value \|\| 4\) - 1\);/);
+  assert.match(page, /Math\.abs\(clamped - Number\(wheelStripPage\.value \|\| 1\)\) >= recenterGap/);
+  assert.match(page, /wheelStripPage\.value = clamped;/);
   assert.match(page, /wheelStripPage\.value = wheelCursorPage\.value;/);
   // And the strip is built from the settled cursor, not the live one.
   assert.match(page, /const center = Math\.max\(1, Math\.min\([\s\S]{0,160}?Number\(wheelStripPage\.value/);
   // The timer has to die with the view.
   assert.match(page, /clearWheelStripSettle\(\);/);
   assert.match(page, /function clearWheelStripSettle\(\) \{[\s\S]*?window\.clearTimeout\(wheelStripSettleTimer\);/);
+});
+
+test("global wheel paging stands down while the thumbnail wheel is visible", () => {
+  const page = read("./src/views/ReaderPage.vue");
+  assert.match(page, /wheelEnabled: wheelPagingEnabled\.value && !showUi\.value/);
+  assert.match(page, /\[shortcutKeys, wheelPagingEnabled, wheelNatural, showUi\]/);
+});
+
+test("unloaded wheel thumbnails keep their own placeholder and optional haptics", () => {
+  const page = read("./src/views/ReaderPage.vue");
+  const wheel = read("./src/components/reader/ReaderNavWheel.vue");
+  assert.doesNotMatch(page, /:fast-scrolling=/);
+  assert.match(wheel, /class="wheel-thumb-placeholder"/);
+  assert.doesNotMatch(wheel, /wheel-track\.is-seeking/);
+  assert.match(wheel, /typeof navigator\.vibrate === "function"/);
+  assert.match(wheel, /navigator\.vibrate\(8\)/);
+  assert.match(wheel, /function emitPreviewPage\(page\)/);
 });
 
 test("thumb preloading is bounded to the strip on screen", () => {
@@ -64,9 +84,11 @@ test("a thumb request is read-only on the server", () => {
   assert.match(reader, /_reader_wheel_thumb_cache: dict\[tuple\[str, int, str\], tuple\[bytes, str\]\] = \{\}/);
   assert.match(reader, /_reader_wheel_thumb_max = 256/);
   assert.match(reader, /async def _reader_wheel_thumb_bytes\(arcid: str, page_path: str, page_no: int\)/);
-  // The mode itself has to exist, and stay out of the reading ladder.
+  // The mode itself has to exist, and stay out of the reading ladder. `auto`
+  // joined the set with feat-16 (auto resolution) but is handled before the
+  // ladder: it never reaches this spec table.
   assert.match(reader, /"thumb": \(200, 55\),/);
-  assert.match(reader, /return text if text in \{"thumb", "low", "mid", "high", "original"\} else "high"/);
+  assert.match(reader, /return text if text in \{"thumb", "low", "mid", "high", "original", "auto"\} else "high"/);
   // A thumb moves neither the cursor nor the session cache.
   assert.match(reader, /is_thumb = safe_mode == "thumb"/);
   assert.match(reader, /if not is_thumb:\s*session\["cursor"\] = _reader_page\(idx, total\)/);
@@ -82,5 +104,5 @@ test("the wheel strip is the only consumer of the thumb mode", () => {
   // chosen quality -- a regression here would silently make the page blurry.
   assert.match(page, /function pageRenderUrl\(page\) \{\s*return withNonce\(pageImageUrl\(page\)/);
   assert.match(page, /function continuousRenderUrl\(page\) \{\s*return withNonce\(pageImageUrl\(page\)/);
-  assert.match(page, /const mode = encodeURIComponent\(String\(readerImageQualityMode\.value \|\| "high"\)/);
+  assert.match(page, /const mode = encodeURIComponent\(String\(readerImageQualityMode\.value \|\| "auto"\)/);
 });

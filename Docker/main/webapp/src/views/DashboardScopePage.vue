@@ -2,7 +2,7 @@
   <div class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick">
           <v-card class="pa-4 mb-4">
             <div class="mb-3">
-              <div class="d-flex align-center ga-2">
+              <div class="d-flex align-center flex-wrap ga-2 home-search-row">
               <v-text-field
                 v-model="homeSearchQuery"
                 class="home-search-input flex-grow-1"
@@ -42,46 +42,31 @@
 
                 <template v-if="!isMobile">
                   <v-btn v-if="homeTab === 'local_gallery' && !isLocalFolderMode()" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
-                  <v-btn v-if="isRealtimeRefreshTab(homeTab)" color="secondary" variant="tonal" icon="mdi-refresh" rounded="lg" @click="onRefreshClick" />
                   <v-btn color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
                 </template>
-              </div>
-
-              <div v-if="isMobile" class="mobile-action-row mt-2">
+              <div v-if="isMobile" class="mobile-action-row">
                 <v-btn
                   v-if="homeTab === 'local_gallery' && !isLocalFolderMode()"
                   class="mobile-action-btn"
                   color="secondary"
                   variant="tonal"
-                  prepend-icon="mdi-sort"
+                  icon="mdi-sort"
                   rounded="lg"
+                  :title="t('home.local.sort.open')"
                   @click="openLocalSortDialog"
-                >
-                  {{ t('home.local.sort.open') }}
-                </v-btn>
-                <v-btn
-                  v-if="isRealtimeRefreshTab(homeTab)"
-                  class="mobile-action-btn"
-                  color="secondary"
-                  variant="tonal"
-                  prepend-icon="mdi-refresh"
-                  rounded="lg"
-                  @click="onRefreshClick"
-                >
-                  {{ t('common.refresh') }}
-                </v-btn>
+                />
                 <v-btn
                   class="mobile-action-btn"
                   color="primary"
                   variant="tonal"
-                  prepend-icon="mdi-filter-variant"
+                  icon="mdi-filter-variant"
                   rounded="lg"
+                  :title="t('home.filter.title')"
                   @click="homeFiltersOpen = true"
-                >
-                  {{ t('home.filter.title') }}
-                </v-btn>
+                />
               </div>
 
+            </div>
             </div>
 
             <!-- The library / favorites / history switch lives in the sidebar rail
@@ -108,9 +93,12 @@
               </v-btn-toggle>
             </div>
 
-            <div v-if="homeTab === 'local_gallery'" class="text-caption text-medium-emphasis mt-2">
-              <div class="d-flex align-center justify-space-between flex-wrap ga-2">
-                <span>{{ t('home.local.folder_mode_hint') }}</span>
+            <!-- Folder mode and private mode share one row of switches: both
+                 change how the feed is presented/persisted, and neither needs
+                 an explanatory sentence ("按目录结构浏览本地库" was removed --
+                 the switch's own label already says it). -->
+            <div v-if="homeTab === 'local_gallery'" class="mt-2">
+              <div class="d-flex align-center flex-wrap ga-4">
                 <v-switch
                   :model-value="isLocalFolderMode()"
                   density="compact"
@@ -119,6 +107,16 @@
                   color="primary"
                   :label="t('home.local.folder_mode')"
                   @update:model-value="localGalleryMode = $event ? 'folder' : 'flat'"
+                />
+                <v-switch
+                  :model-value="privateMode"
+                  density="compact"
+                  inset
+                  hide-details
+                  color="deep-purple"
+                  :label="t('home.local.private_mode')"
+                  :title="t('home.local.private_mode_hint')"
+                  @update:model-value="setPrivateMode($event)"
                 />
               </div>
             </div>
@@ -160,11 +158,21 @@
                 <span v-else class="cover-link-title">{{ getGalleryTitle(item) }}</span>
               </template>
               <template #subtitle>
-                <div v-if="itemRatingValue(item) !== null" class="d-flex align-center ga-1 mt-1">
+                <div v-if="itemRatingValue(item) !== null" class="d-flex align-center ga-1 list-rating-row">
                   <v-rating :model-value="itemRatingValue(item)" readonly half-increments density="compact" size="x-small" color="amber" empty-icon="mdi-star-outline" full-icon="mdi-star" half-icon="mdi-star-half-full" />
                   <span class="text-caption text-medium-emphasis">{{ Number(itemRatingValue(item)).toFixed(1) }}</span>
                 </div>
-                <div class="text-caption text-medium-emphasis text-truncate">{{ itemSubtitle(item) }}</div>
+                <div class="text-caption text-medium-emphasis text-truncate d-flex align-center ga-2">
+                  <!-- List rows have no cover to overlay, so the capsule joins
+                       the metadata line -- at its leftmost, before "Local". -->
+                  <CardProgressBadge
+                    v-if="itemProgressPercent(item) !== null"
+                    class="progress-badge-inline"
+                    :percent="itemProgressPercent(item)"
+                    :title="t('home.progress.title', { percent: itemProgressPercent(item) })"
+                  />
+                  <span class="text-truncate">{{ itemSubtitle(item) }}</span>
+                </div>
               </template>
               <template #prepend>
                 <div class="list-cover" @contextmenu.prevent>
@@ -222,6 +230,15 @@
                       <v-icon v-else size="30">mdi-image-outline</v-icon>
                     </template>
                     <div class="cover-guard" @contextmenu.prevent />
+                      <!-- The progress capsule mirrors the category capsule
+                           across the cover: category is bottom-right, so
+                           progress takes bottom-left. -->
+                      <CardProgressBadge
+                        v-if="itemProgressPercent(item) !== null"
+                        class="progress-badge-anchor"
+                        :percent="itemProgressPercent(item)"
+                        :title="t('home.progress.title', { percent: itemProgressPercent(item) })"
+                      />
                       <div v-if="categoryLabel(item)" class="cat-badge" :style="categoryBadgeStyle(item)">{{ categoryLabel(item) }}</div>
                     </div>
                   <div v-if="homeViewMode === 'compact'" class="cover-title-overlay">{{ getGalleryTitle(item) }}</div>
@@ -693,6 +710,7 @@ import PreviewCard from "../components/dashboard/PreviewCard.vue";
 import TagExploreOverlay from "../components/dashboard/TagExploreOverlay.vue";
 import FeedPager from "../components/dashboard/FeedPager.vue";
 import FeedPullToPage from "../components/dashboard/FeedPullToPage.vue";
+import CardProgressBadge from "../components/dashboard/CardProgressBadge.vue";
 import {
   FEED_SCROLL_STALE,
   classifyFeedScrollRestore,
@@ -757,7 +775,7 @@ export default {
   props: {
     scope: { type: String, default: "local" },
   },
-  components: { PreviewCard, TagExploreOverlay, FeedPager, FeedPullToPage },
+  components: { PreviewCard, TagExploreOverlay, FeedPager, FeedPullToPage, CardProgressBadge },
   data() {
     return {
       _autoRefreshTimer: null,
@@ -862,7 +880,7 @@ export default {
       return "desktop";
     },
     useRoutePreview() {
-      return this.effectivePreviewUiMode !== "desktop";
+      return this.effectivePreviewUiMode !== "desktop" || String(this.$route?.query?.detail || "") === "1";
     },
     isTabletDrawerPreview() {
       return this.effectivePreviewUiMode === "tablet" && Number(this.viewportWidth || 0) >= 768;
@@ -1396,9 +1414,6 @@ export default {
     // also covers a backdrop click and Esc.
     cancelHomeFilters() {
       this.homeFiltersOpen = false;
-    },
-    onRefreshClick() {
-      this.refreshCurrentHomeFeed({ force: true }).catch(() => null);
     },
     // A search replaces the result set. Any offset we remember belongs to the
     // *previous* list, so drop it (and its row ids) before the new rows land --
@@ -2250,7 +2265,8 @@ export default {
         this.restoreLeftTabletPreviewRailMode(true);
         return;
       }
-      const hit = this.findPreviewItemByKey(pv)
+      const hit = this.takePendingPreviewItem(pv)
+        || this.findPreviewItemByKey(pv)
         || this.findPreviewItemByKey(pv, Array.isArray(this.activeHomeState?.items) ? this.activeHomeState.items : [])
         || ((this.previewItemKey(this.tempMobileItem) === pv) ? this.tempMobileItem : null);
       if (hit) {
@@ -2292,6 +2308,7 @@ export default {
       }
       const q = { ...(this.$route?.query || {}) };
       delete q.pv;
+      delete q.detail;
       // `replace`, not `back`: going back assumes every pv change pushed a new
       // history entry, which is not true after a reload or a deep link. Replacing
       // always lands on exactly "dashboard, no preview".
@@ -2373,13 +2390,24 @@ export default {
 }
 
 .mobile-action-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  margin-left: auto;
   gap: 8px;
 }
 
 .mobile-action-btn {
-  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.home-search-input {
+  flex-basis: 240px;
+  min-width: min(100%, 240px);
+}
+
+.list-rating-row {
+  margin-top: 0;
+  margin-bottom: 4px;
+  transform: translateY(-2px);
 }
 
 .mobile-category-grid {

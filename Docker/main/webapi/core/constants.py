@@ -155,9 +155,21 @@ CONFIG_SPECS: dict[str, dict[str, Any]] = {
     "READER_FILTER_PRESET": {"type": "text", "default": "none"},
     "READER_SWIPE_ENABLED": {"type": "bool", "default": True},
     "READER_TAP_TO_TURN": {"type": "bool", "default": True},
+    # Global shortcuts. The two key fields are free text so a rebinding needs no
+    # schema change; the reader parses them (comma/space separated, e.g. "a,d").
+    # Volume keys are opt-in and best-effort: iOS Safari forbids reading the
+    # hardware buttons, so enabling it there simply does nothing.
+    "READER_KEY_PREV": {"type": "text", "default": "a"},
+    "READER_KEY_NEXT": {"type": "text", "default": "d"},
+    "READER_WHEEL_PAGING_ENABLED": {"type": "bool", "default": False},
+    "READER_WHEEL_NATURAL": {"type": "bool", "default": False},
     "READER_PAGE_ANIM_ENABLED": {"type": "bool", "default": True},
     "READER_PRELOAD_COUNT": {"type": "int", "default": 10, "min": 10, "max": 20},
-    "READER_IMAGE_QUALITY_MODE": {"type": "text", "default": "high"},
+    # `auto` is the auto-resolution tier (feat-16): the reader pairs it with a
+    # `res=<W>x<H>` screen hint on the page URLs, and the server downsamples
+    # pages larger than that hint to a contain-fit of it. See
+    # `routers/reader.py::_reader_auto_res_bytes`.
+    "READER_IMAGE_QUALITY_MODE": {"type": "text", "default": "auto"},
     "LOCAL_THUMB_PRESET": {"type": "text", "default": "mid"},
     "READER_WHEEL_RADIUS": {"type": "float", "default": 320.0, "min": 120.0, "max": 1000000.0},
     "READER_WHEEL_CURVE": {"type": "int", "default": 55, "min": 0, "max": 100},

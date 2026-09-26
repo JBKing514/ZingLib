@@ -1,8 +1,10 @@
 import asyncio
+import hashlib
 import io
 import json
 import logging
 import mimetypes
+import re
 import secrets
 import time
 from typing import Any
@@ -11,6 +13,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query, Response
 from PIL import Image, UnidentifiedImageError
 
+from ..core.constants import GALLERY_CACHE_DIR
 from ..core.schemas import ReaderReadEventRequest
 from ..core.config_values import as_bool as _as_bool
 import zipfile
@@ -79,7 +82,13 @@ def _normalize_reader_quality_mode(raw: Any, cfg: dict[str, Any] | None = None) 
     text = str(raw or "").strip().lower()
     if not text and isinstance(cfg, dict):
         text = str(cfg.get("READER_IMAGE_QUALITY_MODE") or "high").strip().lower()
-    return text if text in {"thumb", "low", "mid", "high", "original"} else "high"
+    # `auto` is the auto-resolution tier (feat-16): the client pairs it with a
+    # `res=<W>x<H>` screen hint, and `_reader_auto_res_bytes` downsamples pages
+    # larger than that hint. Without a usable hint (older client, curl, a
+    # test) it degrades to a byte-for-byte pass-through, exactly like
+    # `original` -- it must never fall back to guessing a tier, because the
+    # reader chose auto precisely to keep pages that fit the screen intact.
+    return text if text in {"thumb", "low", "mid", "high", "original", "auto"} else "high"
 
 
 def _reader_quality_spec(mode: str) -> tuple[int, int] | None:
@@ -96,14 +105,109 @@ def _reader_quality_spec(mode: str) -> tuple[int, int] | None:
     }.get(str(mode or "high"), (1080, 85))
 
 
-def _reader_transform_image_bytes(data: bytes, ctype: str, mode: str) -> tuple[bytes, str]:
+def _parse_reader_res(raw: Any) -> tuple[int, int] | None:
+    """Parse the client's `res=<W>x<H>` screen hint.
+
+    Anything malformed or outside a sane screen range is "no hint", and `auto`
+    then degrades to a pass-through rather than to a guess: a bogus hint must
+    never turn into a surprise downscale (or a surprise 400).
+    """
+    match = re.fullmatch(r"(\d{3,5})x(\d{3,5})", str(raw or "").strip())
+    if not match:
+        return None
+    width, height = int(match.group(1)), int(match.group(2))
+    if not (100 <= width <= 20000 and 100 <= height <= 20000):
+        return None
+    return (width, height)
+
+
+# Auto-resolution derivatives are quality-90 webp: the tier exists to cap the
+# pixel count at the screen, not to squeeze bytes, so it stays visibly clean.
+_AUTO_RES_WEBP_QUALITY = 90
+
+
+def _reader_auto_res_bytes(data: bytes, ctype: str, res: tuple[int, int] | None) -> tuple[bytes, str]:
+    """feat-16 auto resolution: shrink oversized pages to the screen, serve the
+    rest untouched.
+
+    Only pages whose pixel dimensions EXCEED the client's screen hint are
+    Lanczos-downsampled to a contain-fit of it; everything else -- smaller
+    pages, animation, unidentifiable bytes, a missing hint -- is returned as
+    the original bytes. `auto` therefore can only save bandwidth and decode
+    cost, never cost quality, and never upscales.
+    """
+    if res is None:
+        return data, ctype
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        return data, ctype
+    cache_dir = GALLERY_CACHE_DIR / "reader_derivatives" / "auto"
+    cache_key = hashlib.sha256(bytes(data)).hexdigest()
+    # The producing parameters are part of the key. Keying by source hash alone
+    # bit the dev container for real: one beta build changed `low` from 360px
+    # to 480px and back, and the 480px derivatives kept being served after the
+    # revert because the old files still matched the bare source hash.
+    cache_path = cache_dir / f"{cache_key}_{res[0]}x{res[1]}_q{_AUTO_RES_WEBP_QUALITY}.webp"
+    try:
+        cached = cache_path.read_bytes()
+        if cached:
+            return cached, "image/webp"
+    except OSError:
+        pass
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            # Resizing an animation means re-encoding every frame, which this
+            # path deliberately does not attempt: oversized animations are
+            # served as-is rather than flattened to their first frame.
+            if getattr(img, "is_animated", False):
+                return data, ctype
+            # Only shrink. A page that already fits the screen keeps its
+            # original bytes.
+            if img.width <= res[0] and img.height <= res[1]:
+                return data, ctype
+            # Contain-fit: the smaller ratio wins, and it is necessarily < 1
+            # here (the fits check above failed), so both target edges are
+            # strictly below the source -- this path can never upscale.
+            scale = min(res[0] / img.width, res[1] / img.height)
+            target = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+            resampling = getattr(Image, "Resampling", Image)
+            frame = img.convert("RGB").resize(target, resample=resampling.LANCZOS)
+            bio = io.BytesIO()
+            frame.save(bio, format="WEBP", quality=_AUTO_RES_WEBP_QUALITY, method=6)
+            rendered = bio.getvalue()
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                temp_path = cache_path.with_suffix(f".{secrets.token_hex(4)}.tmp")
+                temp_path.write_bytes(rendered)
+                temp_path.replace(cache_path)
+            except OSError:
+                logger.debug("reader derivative cache write failed", exc_info=True)
+            return rendered, "image/webp"
+    except (UnidentifiedImageError, OSError):
+        return data, ctype
+
+
+def _reader_transform_image_bytes(data: bytes, ctype: str, mode: str, res: str = "") -> tuple[bytes, str]:
     safe_mode = _normalize_reader_quality_mode(mode)
+    if safe_mode == "auto":
+        return _reader_auto_res_bytes(data, ctype, _parse_reader_res(res))
     spec = _reader_quality_spec(safe_mode)
     if spec is None:
         return data, ctype
     if not isinstance(data, (bytes, bytearray)) or not data:
         return data, ctype
     max_edge, quality = spec
+    cache_dir = GALLERY_CACHE_DIR / "reader_derivatives" / safe_mode
+    cache_key = hashlib.sha256(bytes(data)).hexdigest()
+    # Spec values in the key, same reason as the auto path: a tier whose
+    # numbers change in a future build must not keep serving derivatives made
+    # under the old ones.
+    cache_path = cache_dir / f"{cache_key}_{max_edge}_{quality}.webp"
+    try:
+        cached = cache_path.read_bytes()
+        if cached:
+            return cached, "image/webp"
+    except OSError:
+        pass
     try:
         with Image.open(io.BytesIO(data)) as img:
             frame = img.convert("RGB")
@@ -111,7 +215,15 @@ def _reader_transform_image_bytes(data: bytes, ctype: str, mode: str) -> tuple[b
             frame.thumbnail((max_edge, max_edge), resample=resampling.LANCZOS)
             bio = io.BytesIO()
             frame.save(bio, format="WEBP", quality=quality, method=6)
-            return bio.getvalue(), "image/webp"
+            rendered = bio.getvalue()
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                temp_path = cache_path.with_suffix(f".{secrets.token_hex(4)}.tmp")
+                temp_path.write_bytes(rendered)
+                temp_path.replace(cache_path)
+            except OSError:
+                logger.debug("reader derivative cache write failed", exc_info=True)
+            return rendered, "image/webp"
     except (UnidentifiedImageError, OSError):
         return data, ctype
 
@@ -560,7 +672,7 @@ async def reader_session_close(session_id: str) -> dict[str, Any]:
 
 
 @router.get("/api/reader/session/{session_id}/page/{index}")
-async def reader_session_page(session_id: str, index: int, mode: str = Query(default="")) -> Response:
+async def reader_session_page(session_id: str, index: int, mode: str = Query(default=""), res: str = Query(default="")) -> Response:
     sid = str(session_id or "").strip()
     if not sid:
         raise HTTPException(status_code=400, detail="session_id required")
@@ -613,7 +725,7 @@ async def reader_session_page(session_id: str, index: int, mode: str = Query(def
         return Response(content=thumb, media_type=thumb_type, headers={"X-Reader-Session-Cache": "THUMB"})
 
     if cached_data is not None and cached_data:
-        transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, cached_data, cached_ctype, safe_mode)
+        transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, cached_data, cached_ctype, safe_mode, res)
         return Response(content=transformed, media_type=media_type, headers={"X-Reader-Session-Cache": "HIT"})
 
     data, ctype = await _fetch_reader_page_bytes(arcid, page_path)
@@ -631,12 +743,12 @@ async def reader_session_page(session_id: str, index: int, mode: str = Query(def
             session["cache"] = cache
             session["error"] = ""
             _reader_trim_cache(session)
-    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, safe_mode)
+    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, safe_mode, res)
     return Response(content=transformed, media_type=media_type, headers={"X-Reader-Session-Cache": "MISS"})
 
 
 @router.get("/api/reader/{arcid}/page/{index}")
-async def reader_page(arcid: str, index: int, mode: str = Query(default="")) -> Response:
+async def reader_page(arcid: str, index: int, mode: str = Query(default=""), res: str = Query(default="")) -> Response:
     safe_arcid = str(arcid or "").strip()
     if not safe_arcid:
         raise HTTPException(status_code=400, detail="arcid required")
@@ -657,7 +769,7 @@ async def reader_page(arcid: str, index: int, mode: str = Query(default="")) -> 
         thumb, thumb_type = await _reader_wheel_thumb_bytes(safe_arcid, page_path, int(index))
         return Response(content=thumb, media_type=thumb_type)
     data, ctype = await _fetch_reader_page_bytes(safe_arcid, page_path)
-    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, safe_mode)
+    transformed, media_type = await asyncio.to_thread(_reader_transform_image_bytes, data, ctype, safe_mode, res)
     return Response(content=transformed, media_type=media_type)
 
 

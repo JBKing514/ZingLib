@@ -60,6 +60,9 @@ function makeTeardown(body) {
     // page), not `currentPage`: on the round-40 end screen the latter is N+1,
     // which would offer "resume at" a page that cannot open.
     progressPage: { value: 23 },
+    // The capsule needs a denominator, so the reader also publishes the manifest's
+    // page count (round 62). Without this stub the teardown slice throws.
+    totalPages: { value: 23 },
     route: { name: "dashboard", params: {}, query: {} },
     readDwellQualified: true, readTurnCount: 1,
     previewProgressStore: { publish: value => calls.push(["preview", value.arcid, value.page]) },

@@ -10,6 +10,20 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.1.0] - 2026-09-26
+
+- Reader end-screen recommendations now open the selected gallery in the dashboard PreviewCard instead of starting it immediately.
+- The thumbnail wheel gives short haptic feedback where supported and shows a lightweight placeholder while a fast drag settles, avoiding unnecessary thumbnail churn.
+- Removed the redundant manual dashboard refresh control; stale feeds continue to refresh automatically.
+- Mobile dashboard sort and filter actions now use the same compact icon controls as desktop.
+- Compact-card progress capsules sit above the title gradient, and completed galleries use a darker treatment.
+- Added configurable keyboard and damped mouse-wheel page turning, plus private reading mode that suppresses history and bookmark writes.
+- Reader image quality gains an **Auto** tier, now the default: every page request carries the reader's screen size (`devicePixelRatio` capped at 2), and pages **larger** than the screen are Lanczos-downsampled server-side to a contain-fit of it before transfer, while pages that already fit -- and any request without a usable size hint -- are served as their original bytes. Auto can therefore only save bandwidth and decode cost, never reduce source detail; oversized animations pass through untouched rather than being flattened. Derivatives are cached on disk keyed by source hash and screen size, so each page is transformed once per size.
+- Reader page derivatives are cached on disk per tier, so a page is only transformed once per quality.
+- The reader's quick settings are grouped by purpose (layout / quality / wheel) in a two-column grid, instead of one full-width control per row taking over the screen on mobile. The panel's height follows the actual screen (capped at 80dvh, so ~20% stays visible underneath) instead of a fixed pixel cap that forced scrolling on tall displays, the fit-mode toggle is icon-only, and every option label is shortened to fit its half-width cell without wrapping.
+- Private mode now recolours the application palette instead of applying a filter to the app root. The filter also colour-corrected every gallery cover and reader canvas underneath it; the theme-variable route leaves image, video and canvas pixels alone.
+- Removed the reader's volume-key paging. No browser hands the hardware volume keys to a page, so the channel could never work and its settings row was noise.
+
 ## [1.0.4] - 2026-09-26
 
 - The sidebar edge gesture works at any page zoom. The edge zone was measured in unzoomed CSS pixels while the pointer was read in zoomed ones, so at anything other than 100% the reachable zone was the wrong width and the travel threshold was scaled with it; both sides are normalised against the live zoom now.

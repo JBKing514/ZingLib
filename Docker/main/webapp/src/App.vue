@@ -444,6 +444,20 @@ watch(settingsTab, (next) => {
   if (route.path !== target) router.push(target).catch(() => null);
 });
 
+// Private mode is a whole-app tonal shift, so it is applied as one class on the
+// root rather than threaded through every component. `immediate` matters: the
+// mode can already be on when this mounts (a hot reload, or a route kept alive).
+watch(
+  () => dashboardStore.privateMode,
+  (on) => {
+    if (typeof document === "undefined") return;
+    const root = document.getElementById("app");
+    if (!root) return;
+    root.classList.toggle("zgl-private-mode", on === true);
+  },
+  { immediate: true },
+);
+
 onMounted(async () => {
   initTheme();
   try {

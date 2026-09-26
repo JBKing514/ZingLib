@@ -2,6 +2,8 @@ import { computed, markRaw, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { getHomeFavorite, getHomeHistory, getHomeLocal, getHomeTagSuggest, getLocalFolderList, getReaderManifest, postHomeFavoriteToggle, postHomeRatingSet, searchByImage, searchByImageUpload, searchByText } from "../api";
 import { useSettingsStore } from "./settingsStore";
+import { useLayoutStore } from "./layoutStore";
+import { usePreviewProgressStore } from "./previewProgressStore";
 import { getCategoryLabel } from "../utils/categoryPresets";
 
 // The dashboard tabs that exist in a local-only build.
@@ -58,6 +60,12 @@ export const useDashboardStore = defineStore("dashboard", () => {
   const localSortBy = ref("xp");
   const localSortOrder = ref("desc");
   const localGalleryMode = ref("flat");
+  // Private (incognito) reading. While it is on the reader must not write
+  // history or bookmarks, and the whole UI shifts its tone so the state is
+  // never ambiguous -- a mode that silently discards data has to be visible.
+  // Session-scoped on purpose: it is a deliberate, temporary posture, not a
+  // preference the user should be surprised by after a reload.
+  const privateMode = ref(false);
   const localFolderPath = ref("");
   const localFolderBreadcrumbs = ref([{ name: "local_lib", path: "" }]);
   const localFolderNodes = ref([]);
@@ -77,6 +85,9 @@ export const useDashboardStore = defineStore("dashboard", () => {
   const selectedImageFile = ref(null);
   const imageFileInputRef = ref(null);
   const mobilePreviewItem = ref(null);
+  // One-shot handoff used when a reader recommendation returns to the
+  // dashboard's real PreviewCard. It is consumed by key and never persisted.
+  const pendingPreviewItem = ref(null);
   const isMobile = ref(false);
   const quickSearchOpen = ref(false);
   const showScrollQuickActions = ref(false);
@@ -420,10 +431,17 @@ export const useDashboardStore = defineStore("dashboard", () => {
     pageCountLoading.value = { ...pageCountLoading.value, [arcid]: true };
     getReaderManifest(arcid).then((res) => {
       const n = Number(res?.page_count || 0);
+      const total = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
       pageCountCache.value = {
         ...pageCountCache.value,
-        [arcid]: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0,
+        [arcid]: total,
       };
+      if (total > 0) {
+        // The feed row already carries raw.bookmark. Publishing the denominator
+        // lets the progress store combine persisted history with the manifest
+        // count instead of requiring the gallery to be opened this session.
+        usePreviewProgressStore().publish({ arcid, total });
+      }
     }).catch(() => {
       pageCountCache.value = {
         ...pageCountCache.value,
@@ -516,10 +534,38 @@ export const useDashboardStore = defineStore("dashboard", () => {
     return (rows || []).map((x) => markRaw(normalizeHomeItem(x)));
   }
 
+  function setPendingPreviewItem(item) {
+    const arcid = String(item?.arcid || "").trim();
+    pendingPreviewItem.value = arcid ? markRaw({ ...(item || {}), source: "works", arcid }) : null;
+  }
+
+  function takePendingPreviewItem(key = "") {
+    const item = pendingPreviewItem.value;
+    const expected = String(key || "").trim();
+    const actual = item?.arcid ? `works:${String(item.arcid).trim()}` : "";
+    if (!item || (expected && expected !== actual)) return null;
+    pendingPreviewItem.value = null;
+    return item;
+  }
+
   function categoryBadgeStyle(item) {
     const raw = String(item?.category || "").trim().toLowerCase();
     const c = categoryMap.value[raw]?.color || "#475569";
     return { backgroundColor: c };
+  }
+
+  /**
+   * Reading-progress percentage for a card's capsule, or `null` to hide it.
+   *
+   * Deliberately excludes folders: a folder is a container, not something that
+   * can be read, so it has no progress to report. The value is drawn from the
+   * session progress overlay, which is why a gallery reads as "no capsule" until
+   * it has actually been opened this session -- an unread gallery is not "0%".
+   */
+  function itemProgressPercent(item) {
+    if (String(item?.source || "") !== "works") return null;
+    if (!String(item?.arcid || "").trim()) return null;
+    return usePreviewProgressStore().progressPercent(item);
   }
 
   function itemHoverTags(item) {
@@ -755,6 +801,39 @@ export const useDashboardStore = defineStore("dashboard", () => {
 
   function openLocalSortDialog() {
     localSortOpen.value = true;
+  }
+
+  // Private mode is a *posture*, so it announces itself and stays visible for
+  // as long as it lasts. The notice is not a toast: it must outlive a page
+  // change, and its action closes the mode from the notification centre as
+  // well as the switch. `pushNotice` keys by type, so re-entering replaces the
+  // previous banner instead of stacking duplicates.
+  const PRIVATE_MODE_NOTICE_TYPE = "private-mode";
+
+  function setPrivateMode(on) {
+    const next = on === true;
+    privateMode.value = next;
+    const layout = useLayoutStore();
+    if (next) {
+      layout.pushNotice(
+        PRIVATE_MODE_NOTICE_TYPE,
+        layout.t("home.local.private_mode_notice_title"),
+        layout.t("home.local.private_mode_notice_body"),
+        {
+          actionLabel: layout.t("home.local.private_mode_notice_action"),
+          onAction: () => setPrivateMode(false),
+        },
+      );
+    } else {
+      layout.dismissNoticeType(PRIVATE_MODE_NOTICE_TYPE);
+    }
+  }
+
+  // The one question every write path asks before persisting anything about a
+  // reading. Kept as a getter rather than a bare ref so a caller cannot read
+  // `.value` and then act on a stale answer.
+  function isPrivateMode() {
+    return privateMode.value === true;
   }
 
   async function applyLocalSort() {
@@ -1280,6 +1359,9 @@ export const useDashboardStore = defineStore("dashboard", () => {
     localSortOrder,
     localSortAsc,
     localGalleryMode,
+    privateMode,
+    setPrivateMode,
+    isPrivateMode,
     localFolderPath,
     localFolderBreadcrumbs,
     localFolderNodes,
@@ -1293,6 +1375,9 @@ export const useDashboardStore = defineStore("dashboard", () => {
     selectedImageFile,
     imageFileInputRef,
     mobilePreviewItem,
+    pendingPreviewItem,
+    setPendingPreviewItem,
+    takePendingPreviewItem,
     isMobile,
     quickSearchOpen,
     showScrollQuickActions,
@@ -1314,6 +1399,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     categoryLabel,
     pageCountText,
     categoryBadgeStyle,
+    itemProgressPercent,
     itemHoverTags,
     isFavorited,
     toggleFavorite,

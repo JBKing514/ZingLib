@@ -238,6 +238,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { closeReaderSession, getReaderManifest, getReaderSessionStatus, getReaderSimilar, openReaderSession, postReaderBookmarkSet, postReaderReadEvent, updateReaderSessionCursor } from "../api";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useDashboardStore } from "../stores/dashboardStore";
 import { usePreviewProgressStore } from "../stores/previewProgressStore";
 import { useReaderQueueStore } from "../stores/readerQueueStore";
 import { useViewportFit } from "../composables/useViewportFit";
@@ -248,6 +249,8 @@ import ReaderQuickSettings from "../components/reader/ReaderQuickSettings.vue";
 import ReaderLongPressSearch from "../components/reader/ReaderLongPressSearch.vue";
 import ReaderEndPanel from "../components/reader/ReaderEndPanel.vue";
 import { canOpenReaderRabbitHole, readerEndScreenPage } from "../utils/readerPageActions";
+import { bindReaderShortcuts, parseTurnKeys, resolveKeyAction, resolveWheelAction } from "../utils/readerShortcuts";
+import { readerResParam } from "../utils/readerRes";
 
 const route = useRoute();
 const router = useRouter();
@@ -311,15 +314,32 @@ let wheelStripSettleTimer = 0;
 
 const tapToTurn = computed(() => settingsStore.config?.READER_TAP_TO_TURN !== false);
 const swipeEnabled = computed(() => settingsStore.config?.READER_SWIPE_ENABLED !== false);
+
+// Global shortcuts. The bound keys are read as one string each; parsing and the
+// direction rules live in `utils/readerShortcuts.js` so they can be unit-tested
+// without mounting the reader.
+const shortcutKeys = computed(() => {
+  const parse = (raw, fallback) => {
+    const list = String(raw ?? "").trim() ? String(raw).trim() : fallback;
+    return parseTurnKeys(list);
+  };
+  return {
+    nextKeys: parse(settingsStore.config?.READER_KEY_NEXT, "d"),
+    prevKeys: parse(settingsStore.config?.READER_KEY_PREV, "a"),
+  };
+});
+const wheelPagingEnabled = computed(() => settingsStore.config?.READER_WHEEL_PAGING_ENABLED === true);
+const wheelNatural = computed(() => settingsStore.config?.READER_WHEEL_NATURAL === true);
+
 const localPreloadCount = computed(() => {
   const v = Number(settingsStore.config?.READER_PRELOAD_COUNT ?? 10);
   if (!Number.isFinite(v)) return 10;
   return Math.max(10, Math.min(20, Math.round(v)));
 });
 const readerImageQualityMode = computed({
-  get: () => String(settingsStore.config?.READER_IMAGE_QUALITY_MODE || "high"),
+  get: () => String(settingsStore.config?.READER_IMAGE_QUALITY_MODE || "auto"),
   set: (v) => {
-    settingsStore.config.READER_IMAGE_QUALITY_MODE = String(v || "high");
+    settingsStore.config.READER_IMAGE_QUALITY_MODE = String(v || "auto");
   },
 });
 
@@ -553,9 +573,14 @@ useViewportFit(computed(() => settingsStore.config?.READER_VIEWPORT_FIT_COVER !=
 function pageImageUrl(page) {
   if (!manifestReady.value) return '';
   const sid = String(localReaderSessionId.value || "").trim();
-  const mode = encodeURIComponent(String(readerImageQualityMode.value || "high").trim().toLowerCase() || "high");
-  if (sid) return `/api/reader/session/${encodeURIComponent(sid)}/page/${Number(page || 1)}?mode=${mode}`;
-  return `/api/reader/${encodeURIComponent(arcid.value)}/page/${page}?mode=${mode}`;
+  const mode = encodeURIComponent(String(readerImageQualityMode.value || "auto").trim().toLowerCase() || "auto");
+  // feat-16 auto resolution: the auto tier pairs the mode with a `res=WxH`
+  // screen hint so the server can Lanczos-downsample pages larger than the
+  // screen; manual tiers keep byte-stable URLs and never send it.
+  const res = readerResParam(readerImageQualityMode.value);
+  const resQuery = res ? `&res=${encodeURIComponent(res)}` : "";
+  if (sid) return `/api/reader/session/${encodeURIComponent(sid)}/page/${Number(page || 1)}?mode=${mode}${resQuery}`;
+  return `/api/reader/${encodeURIComponent(arcid.value)}/page/${page}?mode=${mode}${resQuery}`;
 }
 
 // The nav wheel used to reuse `pageImageUrl`, i.e. a full-size read-quality
@@ -774,7 +799,8 @@ function goNextGallery() {
 function openEndRec(item) {
   const next = String(item?.arcid || "").trim();
   if (!next || next === arcid.value) return;
-  router.replace({ name: "reader", params: { arcid: next }, query: { page: "1" } }).catch(() => null);
+  useDashboardStore().setPendingPreviewItem({ ...(item || {}), source: "works", arcid: next });
+  router.replace({ name: "dashboard", query: { pv: `works:${next}`, detail: "1" } }).catch(() => null);
 }
 
 /**
@@ -876,6 +902,10 @@ function syncBookmarkDebounced(page = currentPage.value, immediate = false) {
   const p = Math.max(1, Math.min(Number(totalPages.value || 1), Number(page || 1)));
   const payload = { arcid: arcid.value, page: p };
   const run = () => {
+    // Bookmarks are a persisted "where I was", i.e. exactly what private mode
+    // promises not to keep. The timer is still armed/cleared as usual so the
+    // resume position within this session is unaffected.
+    if (useDashboardStore().isPrivateMode()) return;
     postReaderBookmarkSet(payload).catch(() => null);
   };
   if (immediate) {
@@ -925,7 +955,16 @@ function onWheelPreviewPage(page) {
   // `wheelPages` is what creates <img> tags, so following every tick meant a fast
   // drag fired a request per page it merely passed over.
   wheelCursorPage.value = clamped;
-  armWheelStripSettle();
+  // Keep the cheap settle delay for small movements, but never let the live
+  // cursor outrun the old strip's visible range. Crossing that boundary used
+  // to make every thumbnail transparent until the timer caught up.
+  const recenterGap = Math.max(1, Number(wheelRange.value || 4) - 1);
+  if (Math.abs(clamped - Number(wheelStripPage.value || 1)) >= recenterGap) {
+    clearWheelStripSettle();
+    wheelStripPage.value = clamped;
+  } else {
+    armWheelStripSettle();
+  }
 }
 
 // Long enough that a flick does not emit its whole path, short enough that
@@ -1021,6 +1060,10 @@ function onPointerCancel() {
 async function recordReadEvent(source = "reader-ui") {
   const nowMs = Date.now();
   if (!arcid.value) return;
+  // Private mode must not leave a trace, so the event is dropped *before* the
+  // throttle bookkeeping: a suppressed write must not consume the window that a
+  // later, legitimate one would need.
+  if (useDashboardStore().isPrivateMode()) return;
   if (!readDwellQualified && readTurnCount <= 0) return;
   // The throttle is per gallery. A different gallery is a new reading, and its
   // first qualifying event must go through even if the previous gallery wrote
@@ -1307,7 +1350,7 @@ watch(() => currentPage.value, (p) => {
 watch(() => route.params.arcid, () => {
   if (route.name !== "reader") return;
   if (manifestReady.value) {
-    previewProgressStore.publish({ arcid: arcid.value, page: progressPage.value });
+    previewProgressStore.publish({ arcid: arcid.value, page: progressPage.value, total: Number(totalPages.value || 0) });
     syncBookmarkDebounced(currentPage.value, true);
   }
   arcid.value = String(route.params.arcid || "").trim();
@@ -1352,11 +1395,38 @@ watch(() => continuousPages.value.join(","), () => {
   for (const p of continuousPages.value) initContinuousState(p);
 }, { immediate: true });
 
+// Global input bindings. Re-bound whenever a relevant setting changes so a
+// toggle takes effect without leaving the reader -- the settings panel is
+// reachable from the reader's own quick settings, so "reload to apply" would
+// be a visible wart.
+let disposeShortcuts = null;
+
+function rebindShortcuts() {
+  if (typeof disposeShortcuts === "function") disposeShortcuts();
+  disposeShortcuts = bindReaderShortcuts({
+    onNext: () => nextPage(),
+    onPrev: () => prevPage(),
+    nextKeys: shortcutKeys.value.nextKeys,
+    prevKeys: shortcutKeys.value.prevKeys,
+    // The visible wheel owns wheel events while the reader chrome is open.
+    // Letting the global binding see the same event turned both the strip and
+    // the page at once.
+    wheelEnabled: wheelPagingEnabled.value && !showUi.value,
+    wheelNatural: wheelNatural.value,
+  });
+}
+
+watch(
+  [shortcutKeys, wheelPagingEnabled, wheelNatural, showUi],
+  () => rebindShortcuts(),
+);
+
 onMounted(() => {
   if (typeof document !== "undefined" && !document.fullscreenElement) {
     toggleFullscreen();
   }
   loadManifest().catch(() => null);
+  rebindShortcuts();
 });
 
 watch(() => route.fullPath, () => {
@@ -1366,6 +1436,10 @@ watch(() => route.fullPath, () => {
 });
 
 onBeforeUnmount(() => {
+  if (typeof disposeShortcuts === "function") {
+    disposeShortcuts();
+    disposeShortcuts = null;
+  }
   if (typeof document !== "undefined" && document.fullscreenElement) {
     toggleFullscreen();
   }
@@ -1374,7 +1448,7 @@ onBeforeUnmount(() => {
   clearReadQualifyTimer();
   if (manifestReady.value) {
     // Publish before any network wait, including when returning via browser Back.
-    previewProgressStore.publish({ arcid: arcid.value, page: progressPage.value });
+    previewProgressStore.publish({ arcid: arcid.value, page: progressPage.value, total: Number(totalPages.value || 0) });
     syncBookmarkDebounced(currentPage.value, true);
     if (readDwellQualified || readTurnCount > 0) {
       recordReadEvent("reader-unmount").catch(() => null);

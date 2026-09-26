@@ -10,6 +10,10 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.1.1] - 2026-09-26
+
+- Fixed progress capsules missing from newly loaded compact dashboard cards by decoupling manifest page-count lookup from subtitle rendering.
+
 ## [1.1.0] - 2026-09-26
 
 - Reader end-screen recommendations now open the selected gallery in the dashboard PreviewCard instead of starting it immediately.

@@ -70,6 +70,8 @@ What has to be repaired before the `1.0.4` release.
 | # | What | Why it is not a patch item |
 | --- | --- | --- |
 | feat-1 | **OPDS**: expose the local library as an OPDS catalog for third-party readers (Panels, KyBook, Moon+ Reader, ...) | A whole new outward protocol surface and data exit; the user plainly gains a new way to use the library → `feat` |
+| feat-2 | **Auto-resolution resampling strategy**: offer Performance (BILINEAR) and Quality (Lanczos) modes, with clear copy that every server-side downsample trades CPU time for network bandwidth; users may choose for their host or bypass processing with Original | Adds a visible quality/compute policy and setting that changes server image-processing cost → `feat` |
+| feat-3 | **Reader double buffering and page transitions**: retain current and next display buffers; if the next page is not ready, keep the current page visible with loading progress and transition only after decoding completes, never exposing the black stage | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
 
 ## Relationship to the other files
 

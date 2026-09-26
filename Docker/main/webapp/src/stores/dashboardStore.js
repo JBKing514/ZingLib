@@ -559,12 +559,19 @@ export const useDashboardStore = defineStore("dashboard", () => {
    *
    * Deliberately excludes folders: a folder is a container, not something that
    * can be read, so it has no progress to report. The value is drawn from the
-   * session progress overlay, which is why a gallery reads as "no capsule" until
-   * it has actually been opened this session -- an unread gallery is not "0%".
+   * session progress overlay or a persisted bookmark. Persisted bookmarks fetch
+   * their manifest denominator on demand; an unread gallery is not "0%".
    */
   function itemProgressPercent(item) {
     if (String(item?.source || "") !== "works") return null;
-    if (!String(item?.arcid || "").trim()) return null;
+    const arcid = String(item?.arcid || "").trim();
+    if (!arcid) return null;
+    // Progress owns its denominator lookup. Previously only itemSubtitle()
+    // reached requestWorkPageCount(), so compact cards loaded by infinite
+    // scroll had a bookmark numerator but never fetched their manifest total.
+    // requestWorkPageCount() deduplicates both cached and in-flight arcids.
+    const bookmark = Number(item?.raw?.bookmark ?? item?.bookmark ?? 0);
+    if (Number.isFinite(bookmark) && bookmark > 0) requestWorkPageCount(item);
     return usePreviewProgressStore().progressPercent(item);
   }
 

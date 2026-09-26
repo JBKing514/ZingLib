@@ -90,6 +90,24 @@ test("persisted bookmarks become visible once the manifest total is known", () =
   assert.equal(s.progressPercent(item), 35);
 });
 
+test("compact cards request their own progress denominator", () => {
+  const helperAt = store.indexOf("function itemProgressPercent(");
+  const helper = store.slice(helperAt, store.indexOf("\n  }\n", helperAt));
+  assert.match(helper, /item\?\.raw\?\.bookmark \?\? item\?\.bookmark/,
+    "the progress path recognises a persisted bookmark without a subtitle");
+  assert.match(helper, /requestWorkPageCount\(item\)/,
+    "the progress path triggers the manifest lookup itself");
+  assert.ok(helper.indexOf("requestWorkPageCount(item)") < helper.indexOf("progressPercent(item)"),
+    "the denominator request starts before the percentage is read");
+
+  const requestAt = store.indexOf("function requestWorkPageCount(");
+  const request = store.slice(requestAt, store.indexOf("\n  }\n", requestAt));
+  assert.match(request, /pageCountCache\.value\[arcid\] !== undefined/,
+    "already resolved manifests are not fetched again");
+  assert.match(request, /pageCountLoading\.value\[arcid\]/,
+    "concurrent renders share one in-flight manifest request");
+});
+
 test("a row may carry its own page count without a session publish", () => {
   const s = freshStore();
   assert.equal(s.progressPercent({ arcid: "inline", raw: { bookmark: 3 }, page_count: 12 }), 25);

@@ -43,3 +43,42 @@ export function forgetFeedScroll(key) {
 export function clearFeedScroll() {
   positions.clear();
 }
+
+/**
+ * Does the offset remembered for a feed still describe what is on screen?
+ *
+ * Three outcomes, and the caller must not collapse them into a boolean:
+ *
+ *   "same"     -- the rows match the ones the offset was measured on; restore it.
+ *   "stale"    -- the rows are a *different* set (a search, a filter, a folder);
+ *                 the offset points into content that is gone. Forget it.
+ *   "pending"  -- nothing is rendered yet, because the first load is still in
+ *                 flight. The offset is still good; forgetting it here would
+ *                 lose the position on every slow load, which is the exact case
+ *                 scroll memory exists for.
+ *
+ * Compare row identities, not the length: "twelve rows" is not the same twelve,
+ * and an equal-count replacement is the common case.
+ */
+export const FEED_SCROLL_SAME = "same";
+export const FEED_SCROLL_STALE = "stale";
+export const FEED_SCROLL_PENDING = "pending";
+
+export function classifyFeedScrollRestore(savedIds, liveIds) {
+  const a = Array.isArray(savedIds) ? savedIds : [];
+  const b = Array.isArray(liveIds) ? liveIds : [];
+  // Nothing remembered: there is no claim to check, and nothing to forget.
+  if (!a.length) return FEED_SCROLL_PENDING;
+  // Something remembered, nothing rendered yet -- the list has not arrived.
+  if (!b.length) return FEED_SCROLL_PENDING;
+  if (a.length !== b.length) return FEED_SCROLL_STALE;
+  for (let i = 0; i < a.length; i += 1) {
+    if (String(a[i] ?? "") !== String(b[i] ?? "")) return FEED_SCROLL_STALE;
+  }
+  return FEED_SCROLL_SAME;
+}
+
+/** Convenience for callers that only need "may I use this offset?". */
+export function shouldRestoreFeedScroll(savedIds, liveIds) {
+  return classifyFeedScrollRestore(savedIds, liveIds) !== FEED_SCROLL_STALE;
+}

@@ -14,8 +14,14 @@ import { after, test } from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
-import { clearFeedScroll, forgetFeedScroll, readFeedScroll, writeFeedScroll } from "./src/utils/feedScrollMemory.js";
-
+import {
+  FEED_SCROLL_STALE,
+  classifyFeedScrollRestore,
+  clearFeedScroll,
+  forgetFeedScroll,
+  readFeedScroll,
+  writeFeedScroll,
+} from "./src/utils/feedScrollMemory.js";
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
 const json = value => JSON.stringify(value);
 const REAL_NOW = Date.now;
@@ -67,6 +73,11 @@ function loadPageMethods(names) {
     readFeedScroll,
     writeFeedScroll,
     clearFeedScroll,
+    forgetFeedScroll,
+    // Row ids captured next to the offset: an offset is only meaningful against
+    // the rows it was measured on, so the restore classifies against this.
+    classifyFeedScrollRestore,
+    FEED_SCROLL_STALE,
   };
   const globals = { Number, Math, JSON, String, Object, Array };
   for (const key of Object.keys(env)) {
@@ -93,6 +104,12 @@ function makePage() {
     "_scrollFeedToTop",
     "_applyPagerMove",
     "onFeedScroll",
+    // Row-id bookkeeping: the restore consults these to decide whether the
+    // remembered offset still describes the rows on screen.
+    "_feedRowId",
+    "_feedSavedRowIds",
+    "_feedLiveRowIds",
+    "_rememberFeedRowIds",
   ]);
   const state = { y: 0, scrolls: [], timers: [], written: [] };
   const ctx = {
@@ -102,11 +119,19 @@ function makePage() {
     $route: { name: "dashboard" },
     _feedRestoreUntil: 0,
     _feedRestoreTarget: 0,
+    _feedRowIdsByKey: {},
+    // The rows currently rendered, in feed order. Tests swap this to simulate a
+    // refresh (same rows), a search (different rows) and a pending load (empty).
+    activeHomeState: { items: [], loading: false, error: false },
     $nextTick: cb => cb(),
     // The window's own scroll position is the source of truth for both readers.
     _currentScrollY: () => state.y,
     _scrollPinnedToDocumentEnd: methods._scrollPinnedToDocumentEnd,
     _feedScrollKeyFor: methods._feedScrollKeyFor,
+    _feedRowId: methods._feedRowId,
+    _feedSavedRowIds: methods._feedSavedRowIds,
+    _feedLiveRowIds: methods._feedLiveRowIds,
+    _rememberFeedRowIds: methods._rememberFeedRowIds,
     _saveFeedScroll: methods._saveFeedScroll,
     _restoreFeedScroll: methods._restoreFeedScroll,
     _scrollFeedToTop: methods._scrollFeedToTop,
@@ -162,6 +187,79 @@ test("each feed gets its own offset, and folder mode is its own feed", () => {
   assert.equal(keys[2], "local_gallery|folder:a/b/c", "the key must not depend on the slashes typed");
   assert.equal(at({ homeTab: "" }), "", "no tab means no slot to write into");
   clearFeedScroll();
+});
+
+test("an offset is only restored against the rows it was measured on", () => {
+  const { ctx, state, methods } = makePage();
+  clearFeedScroll();
+  const rows = (...ids) => ids.map(a => ({ source: "works", arcid: a }));
+
+  // The user scrolls a feed of three rows, then leaves.
+  ctx.activeHomeState = { items: rows("a", "b", "c") };
+  state.y = 900;
+  methods._saveFeedScroll.call(ctx, "local_gallery");
+  assert.equal(readFeedScroll("local_gallery"), 900, "leaving records the offset");
+  assert.equal(json(ctx._feedRowIdsByKey.local_gallery), json(["works:a", "works:b", "works:c"]), "and the rows it belonged to");
+
+  // Comes back to the very same list (a refresh rebuilt identical rows).
+  state.y = 0;
+  state.scrolls.length = 0;
+  methods._restoreFeedScroll.call(ctx, "local_gallery");
+  assert.equal(state.y, 900, "the same rows get their offset back");
+
+  // Now a *search* lands a different set of the same length: the offset is
+  // meaningless there, so it must be dropped rather than applied blindly.
+  ctx.activeHomeState = { items: rows("x", "y", "z") };
+  clearFeedScroll();
+  writeFeedScroll("local_gallery", 900);
+  state.y = 0;
+  state.scrolls.length = 0;
+  methods._restoreFeedScroll.call(ctx, "local_gallery");
+  assert.equal(json(state.scrolls), json([]), "a different result set gets no restore");
+  assert.equal(readFeedScroll("local_gallery"), 0, "and its stale offset is forgotten");
+
+  // A shorter replacement must not scroll past the end either.
+  ctx.activeHomeState = { items: rows("a") };
+  clearFeedScroll();
+  writeFeedScroll("local_gallery", 900);
+  ctx._feedRowIdsByKey = { local_gallery: ["works:a", "works:b", "works:c"] };
+  state.y = 0;
+  state.scrolls.length = 0;
+  methods._restoreFeedScroll.call(ctx, "local_gallery");
+  assert.equal(json(state.scrolls), json([]), "an equal-prefix but shorter list is not the same list");
+
+  clearFeedScroll();
+});
+
+test("a feed whose rows have not arrived yet keeps its offset for the retry", () => {
+  const { ctx, methods } = makePage();
+  clearFeedScroll();
+  ctx.activeHomeState = { items: [{ source: "works", arcid: "a" }] };
+  ctx._feedRowIdsByKey = { local_gallery: ["works:a"] };
+  writeFeedScroll("local_gallery", 700);
+
+  // The rows are still in flight when the restore runs. This is "not yet", not
+  // "changed" -- forgetting here would lose the position on every slow load.
+  ctx.activeHomeState = { items: [], loading: true };
+  methods._restoreFeedScroll.call(ctx, "local_gallery");
+  assert.equal(readFeedScroll("local_gallery"), 700, "a pending load must not drop the offset");
+
+  // Once they land, the restore works normally.
+  ctx.activeHomeState = { items: [{ source: "works", arcid: "a" }] };
+  methods._restoreFeedScroll.call(ctx, "local_gallery");
+  assert.equal(readFeedScroll("local_gallery"), 700);
+  clearFeedScroll();
+});
+
+test("a search submission invalidates the feed's remembered offset", () => {
+  const src = read("./src/views/DashboardScopePage.vue");
+  const submit = src.slice(src.indexOf("onHomeSearchSubmit() {"), src.indexOf("openHomeItem(item) {"));
+  assert.match(submit, /forgetFeedScroll\(key\)/, "a new result set invalidates the old offset");
+  assert.match(submit, /this\.runHomeSearchPlaceholder\(\)/, "and the search still runs");
+  // The template must call the wrapper, not the store action directly -- a
+  // direct call would search without ever clearing the offset.
+  assert.ok(!/@(keyup\.enter|click)="runHomeSearchPlaceholder"/.test(src), "the input must route through the wrapper");
+  assert.equal((src.match(/onHomeSearchSubmit/g) || []).length, 3, "one definition and two bindings");
 });
 
 test("the page restores a feed's offset on the way back in", () => {

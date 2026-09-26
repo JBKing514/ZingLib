@@ -12,7 +12,7 @@
                 variant="outlined"
                 color="primary"
                 rounded="lg"
-                @keyup.enter="runHomeSearchPlaceholder"
+                @keyup.enter="onHomeSearchSubmit"
               >
                 <template #prepend-inner>
                   <v-icon
@@ -35,7 +35,7 @@
                   <v-icon
                     color="primary"
                     class="cursor-pointer"
-                    @click="runHomeSearchPlaceholder"
+                    @click="onHomeSearchSubmit"
                   >mdi-magnify</v-icon>
                 </template>
               </v-text-field>
@@ -200,7 +200,7 @@
               >
               <v-card
                 class="home-card"
-                :class="{ compact: homeViewMode === 'compact' }"
+                :class="{ compact: homeViewMode === 'compact', 'card-pressing': cardPressingKey === previewItemKey(item) }"
                 variant="flat"
                 @touchstart.passive="onCardTouchStart(item, itemIndex, $event)"
                 @touchmove.passive="onCardTouchMove($event)"
@@ -287,7 +287,11 @@
           </div>
           </div>
 
-          <div v-if="longPressPickerOpen" class="longpress-picker-backdrop" />
+          <div
+            v-if="longPressPickerOpen"
+            class="longpress-picker-backdrop"
+            @click="closeLongPressPicker(true)"
+          />
 
           <div
             v-if="longPressPickerOpen && longPressPickerItems.length"
@@ -689,7 +693,14 @@ import PreviewCard from "../components/dashboard/PreviewCard.vue";
 import TagExploreOverlay from "../components/dashboard/TagExploreOverlay.vue";
 import FeedPager from "../components/dashboard/FeedPager.vue";
 import FeedPullToPage from "../components/dashboard/FeedPullToPage.vue";
-import { clearFeedScroll, readFeedScroll, writeFeedScroll } from "../utils/feedScrollMemory";
+import {
+  FEED_SCROLL_STALE,
+  classifyFeedScrollRestore,
+  clearFeedScroll,
+  forgetFeedScroll,
+  readFeedScroll,
+  writeFeedScroll,
+} from "../utils/feedScrollMemory";
 import {
   batchUpdateLocalMeta,
   deleteLocalGallery,
@@ -704,6 +715,7 @@ import {
   tagSuggestLabels,
 } from "../utils/tagNamespaces";
 import { getCategoryLabel } from "../utils/categoryPresets";
+import { mergeMetaEditIntoItem } from "../utils/metaEditMerge";
 
 // What a tap on the page is allowed to mean instead of "put the tablet preview
 // away". Galleries stay galleries, controls stay controls, and a panel that
@@ -733,6 +745,12 @@ const SHELL_CLICK_KEEPS_PREVIEW = [
   "label",
   '[role="button"]',
 ].join(", ");
+
+// How long the long-press picker stays up before its own opening touch is
+// allowed to mean "select this one". The picker is summoned after a 430ms hold,
+// so the touch that opened it has not ended yet; without this window that same
+// touchend commits the selection and the picker is gone the moment it appears.
+const LONG_PRESS_OPEN_GRACE_MS = 260;
 
 export default {
   name: "DashboardScopePage",
@@ -793,7 +811,16 @@ export default {
       _longPressMoveX: 0,
       _longPressBaseIndex: 0,
       _longPressSuppressClickUntil: 0,
+      // When the picker went up, so the end event from its opening touch can be
+      // told apart from a real selection.
+      _longPressOpenedAt: 0,
       _longPressAnchorY: 0,
+      // The `previewItemKey` of the card the finger is currently resting on.
+      // Drives the `.card-pressing` class, which is what tells the browser to
+      // stop treating the touch as a text selection / image drag while the
+      // 430ms long-press timer runs. Without it the browser wins the gesture and
+      // answers with `touchcancel`, closing the picker the moment it opens.
+      cardPressingKey: "",
       // The offsets themselves live in feedScrollMemory (module scope, so they
       // outlive a remount); these two only guard the restore in flight.
       _feedRestoreUntil: 0,
@@ -801,8 +828,14 @@ export default {
       // Set when the presentation is switched from another route: the feed that is
       // waiting for us was rebuilt, so it wants the top rather than an old offset.
       _feedPendingTop: false,
+      // Row ids captured alongside each remembered offset, so a restore can tell
+      // "the same list" from "a different list that happens to be the same length".
+      // Deliberately non-reactive-prefixed: it is bookkeeping, never rendered.
+      _feedRowIdsByKey: null,
+      // Guards a close against a slower earlier close's `.finally()` re-arming the
+      // rail or resurrecting the pane.
+      _previewCloseSeq: 0,
       _longPressBodyPrevOverflow: "",
-      _longPressBodyPrevTouchAction: "",
       _longPressAbortOpen: false,
     };
   },
@@ -851,6 +884,7 @@ export default {
     dashboardPageShellClass() {
       return {
         "tablet-preview-open-right": this.isTabletDrawerPreview && this.showMobilePreview && this.previewDrawerSide !== "left",
+        "tablet-preview-open-left": this.isTabletDrawerPreview && this.showMobilePreview && this.previewDrawerSide === "left",
       };
     },
     longPressPickerStyle() {
@@ -1000,6 +1034,7 @@ export default {
       // remembered offsets point into content that no longer exists, so drop
       // them and start the new mode at the top.
       clearFeedScroll();
+      this._feedRowIdsByKey = null;
       this._feedRestoreUntil = 0;
       this._feedRestoreTarget = 0;
       if (String(this.$route?.name || "") === "dashboard") {
@@ -1103,6 +1138,12 @@ export default {
       this._longPressAnchorY = Number(touch?.clientY || this._longPressStartY || 0);
       this.longPressPickerOpen = true;
       this._longPressActive = true;
+      // The 430ms timer fires while the finger is still down, and the very next
+      // touchend is the *same* touch that opened the picker. Committing on it
+      // would navigate to the selected gallery on release, i.e. the picker
+      // appears and is gone in the same frame. Until the finger actually lifts
+      // (or the grace window passes) the end event must not commit.
+      this._longPressOpenedAt = Date.now();
       this._longPressSuppressClickUntil = Date.now() + 420;
       this.setLongPressBodyLock(true);
     },
@@ -1112,6 +1153,14 @@ export default {
         this._longPressTimer = null;
       }
       this._longPressActive = false;
+      // The shell reads this store flag before the picker is visible as well as
+      // while it is open. Clear it on every exit rather than waiting for the
+      // `longPressPickerOpen` watcher to run on a later render tick.
+      this.longPressPickerActive = false;
+      this._longPressOpenedAt = 0;
+      // Releasing the press mark is what hands the card back to the browser:
+      // vertical scrolling and (after a real tap) the click both resume.
+      this.cardPressingKey = "";
       this.setLongPressBodyLock(false);
       if (force) {
         this._longPressSuppressClickUntil = Date.now() + 280;
@@ -1129,6 +1178,14 @@ export default {
       const touch = event?.touches?.[0] || null;
       if (!touch) return;
       this.closeLongPressPicker();
+      // Claim the pointer for the gallery during the 430ms arming window. The
+      // sidebar listens on `window`, so waiting until the picker opens leaves a
+      // race in which the drawer can consume the same drag first.
+      this.longPressPickerActive = true;
+      // Mark the card as "the browser does not own this touch" *before* the
+      // 430ms timer can fire, so the selection / callout machinery never starts
+      // and there is nothing to cancel the gesture with.
+      this.cardPressingKey = this.previewItemKey(item);
       this._longPressAbortOpen = false;
       this._longPressStartX = Number(touch.clientX || 0);
       this._longPressStartY = Number(touch.clientY || 0);
@@ -1179,6 +1236,13 @@ export default {
         this.closeLongPressPicker(true);
         return;
       }
+      // The end event that arrives immediately after the picker opened belongs to
+      // the opening touch, not to a selection. Swallow it and keep the picker up:
+      // the user has not chosen anything yet, and the alternative is the picker
+      // flashing open and shut (and navigating) the instant it appears.
+      if (Date.now() - Number(this._longPressOpenedAt || 0) < LONG_PRESS_OPEN_GRACE_MS) {
+        return;
+      }
       const pick = (this.longPressPickerItems || [])[Number(this.longPressPickerIndex || 0)] || null;
       this.closeLongPressPicker(true);
       if (pick) {
@@ -1186,6 +1250,17 @@ export default {
       }
     },
     onCardTouchCancel() {
+      // `touchcancel` means the browser took the touch away (a system gesture, a
+      // scroll it decided to own, an incoming call). It never means "the user
+      // chose something", so this path only dismisses -- it must never navigate.
+      //
+      // Once the picker is visible, a cancel still does not mean "dismiss". CSS
+      // zoom and mobile browser gesture arbitration can cancel the opening touch
+      // after the timer fires; keeping the picker visible lets the user continue
+      // with a fresh touch, while the backdrop remains an explicit exit.
+      if (this.longPressPickerOpen) {
+        return;
+      }
       this.closeLongPressPicker(true);
     },
     async onManualLoadMoreClick() {
@@ -1325,6 +1400,18 @@ export default {
     onRefreshClick() {
       this.refreshCurrentHomeFeed({ force: true }).catch(() => null);
     },
+    // A search replaces the result set. Any offset we remember belongs to the
+    // *previous* list, so drop it (and its row ids) before the new rows land --
+    // otherwise coming back later would restore a position measured against a
+    // list that no longer exists.
+    onHomeSearchSubmit() {
+      const key = this._feedScrollKeyFor(this.homeTab);
+      if (key) {
+        forgetFeedScroll(key);
+        if (this._feedRowIdsByKey) delete this._feedRowIdsByKey[key];
+      }
+      return this.runHomeSearchPlaceholder();
+    },
     // A horizontal drag on the feed belongs to the shell now (it pulls the
     // sidebar out and pushes it back), and the library/favorites/history switch
     // lives in the rail. Nothing in this page may claim the horizontal axis on
@@ -1343,6 +1430,35 @@ export default {
         return `${tab}|folder:${path}`;
       }
       return tab;
+    },
+    // A stable identity per row, so "the same list" can be tested rather than
+    // guessed at. `arcid` is the gallery identity; the source prefix keeps a
+    // local row from colliding with a history row that happens to share a hash.
+    _feedRowId(row) {
+      const r = row || {};
+      const source = String(r.source || "").trim();
+      const arcid = String(r.arcid || "").trim();
+      if (arcid) return `${source}:${arcid}`;
+      const title = String(r.title || r.name || "").trim();
+      const id = String(r.id ?? r.work_id ?? "").trim();
+      return `${source}:${id}:${title}`;
+    },
+    // The ids we remembered alongside the offset, and the ids currently rendered.
+    _feedSavedRowIds(key) {
+      const state = this._feedRowIdsByKey || {};
+      return Array.isArray(state[key]) ? state[key] : [];
+    },
+    _feedLiveRowIds() {
+      const state = this.activeHomeState || {};
+      const items = Array.isArray(state.items) ? state.items : [];
+      return items.map((row) => this._feedRowId(row));
+    },
+    // Remember which rows the current offset belongs to. Called on the way out,
+    // right next to the offset write.
+    _rememberFeedRowIds(key) {
+      if (!key) return;
+      if (!this._feedRowIdsByKey) this._feedRowIdsByKey = {};
+      this._feedRowIdsByKey[key] = this._feedLiveRowIds();
     },
     _currentScrollY() {
       if (typeof window === "undefined") return 0;
@@ -1369,11 +1485,26 @@ export default {
       const key = this._feedScrollKeyFor(tabKey);
       if (!key) return;
       writeFeedScroll(key, this._currentScrollY());
+      this._rememberFeedRowIds(key);
     },
     _restoreFeedScroll(tabKey) {
       if (typeof window === "undefined") return;
       const key = this._feedScrollKeyFor(tabKey);
       if (!key) return;
+      // An offset is only meaningful against the rows it was measured on. A
+      // search or a refresh that landed a *different* result set makes the stored
+      // number arbitrary -- drop it rather than scrolling into nowhere. A list
+      // that simply has not arrived yet is not a different list, so its offset
+      // survives until the rows land.
+      if (
+        classifyFeedScrollRestore(this._feedSavedRowIds(key), this._feedLiveRowIds())
+        === FEED_SCROLL_STALE
+      ) {
+        forgetFeedScroll(key);
+        this._feedRestoreTarget = 0;
+        this._feedRestoreUntil = 0;
+        return;
+      }
       const y = readFeedScroll(key);
       this._feedRestoreTarget = y;
       this._feedRestoreUntil = Date.now() + 350;
@@ -1442,15 +1573,11 @@ export default {
       if (!body) return;
       if (locked) {
         this._longPressBodyPrevOverflow = String(body.style.overflow || "");
-        this._longPressBodyPrevTouchAction = String(body.style.touchAction || "");
         body.style.overflow = "hidden";
-        body.style.touchAction = "none";
         return;
       }
       body.style.overflow = String(this._longPressBodyPrevOverflow || "");
-      body.style.touchAction = String(this._longPressBodyPrevTouchAction || "");
       this._longPressBodyPrevOverflow = "";
-      this._longPressBodyPrevTouchAction = "";
     },
     closeDesktopHoverPreview() {
       if (this._hoverLeaveTimer) {
@@ -1786,13 +1913,78 @@ export default {
       const ns = normalizeNamespaceKey(this.quickTagNs, { fallbackToOther: true }) || "other";
       this.quickTagSaving = true;
       try {
-        await batchUpdateLocalMeta({ arcids: [arcid], namespace: ns, add_user_tags: add, remove_user_tags: [], clear_user_title: false });
+        const res = await batchUpdateLocalMeta({ arcids: [arcid], namespace: ns, add_user_tags: add, remove_user_tags: [], clear_user_title: false });
+        this.quickTagItem = null;
         this.closeQuickTagDialog();
-        await this.resetHomeFeed();
+        // Refresh *this card only*. Re-running the whole feed would also refresh
+        // it, but it re-fetches every other row, drops the scroll position and
+        // flickers the grid for a change that touched one gallery -- which is not
+        // what "edit this card's metadata" should cost. The endpoint answers with
+        // the deltas it applied, so they are folded into the row already on screen.
+        const edit = (Array.isArray(res?.rows) ? res.rows : []).find(
+          (r) => String(r?.arcid || "").trim() === arcid,
+        );
+        if (edit && edit.ok !== false) {
+          const merged = mergeMetaEditIntoItem(this.quickTagTargetItem(arcid), { ...edit, namespace: ns });
+          this.patchHomeItem(merged);
+          this.refreshOpenPreviewFromArcids(arcid);
+        } else {
+          // The row was not the one we thought, or the server refused it: fall
+          // back to the feed so the user is not shown a stale card.
+          await this.resetHomeFeed();
+          this.refreshOpenPreviewFromFeed();
+        }
       } catch (e) {
         this.quickTagSaving = false;
         useToastStore().open(String(e?.response?.data?.detail || e), "warning");
       }
+    },
+    // The row the quick-add dialog was opened for, looked up across the feed
+    // states. Used to merge the edit back into the exact snapshot on screen.
+    quickTagTargetItem(arcid) {
+      const key = String(arcid || "").trim();
+      if (!key) return null;
+      const own = Array.isArray(this.activeHomeState?.items) ? this.activeHomeState.items : [];
+      return (
+        own.find((r) => String(r?.arcid || "").trim() === key)
+        || [
+          ...(Array.isArray(this.homeLocal?.items) ? this.homeLocal.items : []),
+          ...(Array.isArray(this.homeHistory?.items) ? this.homeHistory.items : []),
+          ...(Array.isArray(this.homeLocalFavorite?.items) ? this.homeLocalFavorite.items : []),
+        ].find((r) => String(r?.arcid || "").trim() === key)
+        || (String(this.mobilePreviewItem?.arcid || "").trim() === key ? this.mobilePreviewItem : null)
+        || (String(this.tempMobileItem?.arcid || "").trim() === key ? this.tempMobileItem : null)
+        || (String(this.desktopHoverPreviewItem?.arcid || "").trim() === key ? this.desktopHoverPreviewItem : null)
+        || null
+      );
+    },
+    // Point whichever pane is showing `arcid` at the freshly patched feed row.
+    refreshOpenPreviewFromArcids(arcid) {
+      const key = String(arcid || "").trim();
+      if (!key) return;
+      const hit = this.quickTagTargetItem(key)
+        || (this.$refs.previewCard?.item && String(this.$refs.previewCard.item.arcid || "").trim() === key
+          ? this.$refs.previewCard.item
+          : null);
+      if (!hit) return;
+      if (String(this.mobilePreviewItem?.arcid || "").trim() === key) this.mobilePreviewItem = hit;
+      if (String(this.tempMobileItem?.arcid || "").trim() === key) this.tempMobileItem = hit;
+      if (String(this.desktopHoverPreviewItem?.arcid || "").trim() === key) this.desktopHoverPreviewItem = hit;
+    },
+    // Re-resolve whichever preview pane is open against the current feed rows.
+    // Called after anything that rewrites a gallery's metadata, so the pane shows
+    // the edit the user just made rather than the row it was opened with.
+    refreshOpenPreviewFromFeed() {
+      const pv = String(this.$route?.query?.pv || "").trim();
+      if (!pv) return;
+      const hit = this.findPreviewItemByKey(pv)
+        || this.findPreviewItemByKey(pv, Array.isArray(this.activeHomeState?.items) ? this.activeHomeState.items : []);
+      if (!hit) return;
+      if (this.previewItemKey(this.mobilePreviewItem) === pv) this.mobilePreviewItem = hit;
+      // `tempMobileItem` shadows the feed in `resolvedMobilePreviewItem`, so it has
+      // to be refreshed too -- otherwise the pane keeps the pre-edit snapshot.
+      if (this.previewItemKey(this.tempMobileItem) === pv) this.tempMobileItem = hit;
+      if (this.previewItemKey(this.desktopHoverPreviewItem) === pv) this.desktopHoverPreviewItem = hit;
     },
     async onPreviewApplyTagFilter(payload) {
       const tag = String(typeof payload === "object" && payload !== null ? (payload.tag || "") : (payload || "")).trim();
@@ -1839,10 +2031,19 @@ export default {
         tags_translated: Array.isArray(row.tags_translated) ? row.tags_translated : (cur.tags_translated || []),
       };
     },
+    // A hydrated row is a *fresher version of an item we already hold*. The
+    // preview panes keep their own snapshot (the row object they were opened
+    // with), so replacing the feed is not enough -- the open pane would keep
+    // showing the tags the user just edited away.
+    //
+    // This used to open with a call to a hydration helper that does not exist
+    // anywhere in the tree (an EH-era leftover). The call threw on every
+    // hydration and the merge below it never ran, which is exactly the "edit a
+    // tag, the card does not change" report. The store now owns the row patch.
     onPreviewHydrated(item) {
-      this.applyHydratedEhItem(item);
       const key = this.previewItemKey(item);
       if (!key) return;
+      this.patchHomeItem(item);
       if (this.previewItemKey(this.desktopHoverPreviewItem) === key && this.desktopHoverPreviewItem) {
         this.desktopHoverPreviewItem = this._mergeHydratedItem(this.desktopHoverPreviewItem, item);
       }
@@ -2077,27 +2278,37 @@ export default {
     },
     closeMobilePreview() {
       const hasPv = !!String(this.$route?.query?.pv || "").trim();
+      this.mobilePreviewItem = null;
+      this.tempMobileItem = null;
+      // Tear the pane down *first*, then fix the URL. The pane's lifetime is the
+      // local state; the query key only mirrors it. Doing it the other way round
+      // (router.back() and hope) meant the route watcher could re-resolve a `pv`
+      // that was still there -- the previous gallery's card slid back in.
+      this._previewCloseSeq = Number(this._previewCloseSeq || 0) + 1;
+      const seq = this._previewCloseSeq;
       if (!hasPv) {
-        this.mobilePreviewItem = null;
-        this.tempMobileItem = null;
         this.restoreLeftTabletPreviewRailMode(true);
         return;
       }
-      this.$router.back();
-      setTimeout(() => {
+      const q = { ...(this.$route?.query || {}) };
+      delete q.pv;
+      // `replace`, not `back`: going back assumes every pv change pushed a new
+      // history entry, which is not true after a reload or a deep link. Replacing
+      // always lands on exactly "dashboard, no preview".
+      this.$router.replace({ query: q }).catch(() => null).finally(() => {
+        if (Number(this._previewCloseSeq || 0) !== seq) return;
+        // The replace can be a no-op when the query was already clean (a stale
+        // `pv` in the resolved route, for instance); make sure the mirror is off
+        // regardless -- this used to be a 320ms timer, which both raced the
+        // watcher and left the pane up for a third of a second after the tap.
         const stillPv = String(this.$route?.query?.pv || "").trim();
-        if (!stillPv) {
-          this.mobilePreviewItem = null;
-          this.tempMobileItem = null;
-          this.restoreLeftTabletPreviewRailMode(true);
-          return;
+        if (stillPv) {
+          const q2 = { ...(this.$route?.query || {}) };
+          delete q2.pv;
+          this.$router.replace({ query: q2 }).catch(() => null);
         }
-        const q = { ...(this.$route?.query || {}) };
-        delete q.pv;
-        this.$router.replace({ query: q }).catch(() => null).finally(() => {
-          this.restoreLeftTabletPreviewRailMode(true);
-        });
-      }, 320);
+        this.restoreLeftTabletPreviewRailMode(true);
+      });
     },
     openHomeItem(item) {
       if (String(item?.source || "") === "folder") {
@@ -2193,6 +2404,35 @@ export default {
   -webkit-touch-callout: none;
 }
 
+/* The long-press picker competes with the browser's own long-press gesture.
+   `user-select: none` stops the *selection* highlight, but on Android/iOS a
+   sustained press over text or an image still raises the callout / drag-to-
+   select machinery, and the browser answers it with `touchcancel` -- which the
+   card read as "the user let go", so the picker closed the instant the timer
+   fired. `touch-action: pan-y` (inherited from .v-main) additionally reserves
+   the horizontal axis for the browser, which is exactly the axis the picker
+   scrubs on. Declaring the card as a self-managed surface removes both: the
+   browser keeps vertical scrolling, gives up everything else. */
+.home-card {
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* While the finger is down waiting for the 430ms timer -- or while the picker
+   is up -- nothing in the card may be selected or dragged, and the horizontal
+   axis must belong to us. */
+.home-card.card-pressing,
+.home-card.card-pressing * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+.home-card.card-pressing {
+  touch-action: none;
+}
+
 .longpress-picker-backdrop {
   position: fixed;
   inset: 0;
@@ -2210,6 +2450,12 @@ export default {
   display: flex;
   justify-content: center;
   pointer-events: auto;
+  /* The scrub is a horizontal drag. `none` keeps the browser from claiming that
+     axis (which it would answer with `touchcancel`), and the handlers already
+     call preventDefault, so nothing here needs the passive default. */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .longpress-picker-card {
@@ -2307,6 +2553,13 @@ export default {
 
   .dashboard-page-shell.tablet-preview-open-right {
     padding-right: var(--tablet-preview-pane-width);
+  }
+
+  /* The drawer docks against the rail, so the grid only has to give up the pane
+     itself. Without this the left drawer floats over the first column of cards
+     while the right one pushes them aside -- same feature, two different feels. */
+  .dashboard-page-shell.tablet-preview-open-left {
+    padding-left: var(--tablet-preview-pane-width);
   }
 }
 

@@ -18,6 +18,8 @@ import {
   sidebarSwipeEdge,
   SIDEBAR_SWIPE_EDGE_RATIO,
   SIDEBAR_SWIPE_TRAVEL,
+  readPageZoom,
+  unzoomPointer,
 } from "./src/composables/useSidebarSwipe.js";
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -189,4 +191,138 @@ test("both filter panels can be dismissed, not only by tapping the scrim", () =>
     assert.ok(String(dict["home.filter.cancel"]).trim().length > 0);
     assert.ok(dict["home.filter.apply"], `${locale} still has the apply label`);
   }
+});
+
+// --- page zoom must not desynchronise the gesture -------------------------
+//
+// `#app { zoom: var(--zgl-page-zoom) }` shrinks the *layout* viewport, but
+// `window.innerWidth` keeps reporting the unzoomed width and a `clientX` read
+// inside the zoomed subtree is reported in zoomed space. At any zoom != 100% the
+// edge zone (innerWidth/3, unzoomed) and the pointer that has to fall inside it
+// (zoomed) were therefore measured in two different units: at 80% the zone the
+// user could actually reach was a fifth of the screen wider than intended, and
+// the travel threshold was off by the same factor.
+
+test("the edge zone and the pointer are measured in the same units under zoom", () => {
+  // At 100% nothing changes.
+  assert.equal(unzoomPointer(120, 1), 120);
+  assert.equal(unzoomPointer(120, undefined), 120, "a missing zoom is treated as 100%");
+  assert.equal(unzoomPointer(120, 0), 120, "and so is a nonsense one, rather than dividing by zero");
+
+  // In the zoomed subtree the browser reports 80px for a point that is 100 CSS
+  // px from the edge; dividing by the zoom puts it back on the layout grid.
+  assert.equal(unzoomPointer(80, 0.8), 100);
+  assert.equal(unzoomPointer(160, 1.6), 100);
+
+  // The collaboration, which is what actually broke: a pull that starts 100 CSS
+  // px from the edge is inside the 360px zone at *any* zoom, because both sides
+  // are normalised before they meet.
+  const atZoom = (zoom, startCss) => resolveSidebarSwipe(pull({
+    startX: unzoomPointer(startCss * zoom, zoom),
+    dx: unzoomPointer(90 * zoom, zoom),
+  }));
+  assert.equal(atZoom(1, 100), "open");
+  assert.equal(atZoom(0.8, 100), "open", "80% zoom must not move the edge zone");
+  assert.equal(atZoom(1.6, 100), "open", "nor 160%");
+  assert.equal(atZoom(0.8, 200), "", "and a start well past the zone still does not open");
+});
+
+test("the composable reads the live zoom, not a value captured once", () => {
+  assert.equal(readPageZoom(), 1, "no document in the test: the neutral value");
+  // A string CSS value, an empty declaration and a stray custom property all
+  // have to resolve to a usable number -- `Number("")` is 0, which would make
+  // every unzoom a division by zero.
+  assert.equal(unzoomPointer(50, readPageZoom()), 50);
+
+  const src = read("./src/composables/useSidebarSwipe.js");
+  assert.match(src, /SIDEBAR_SWIPE_ZOOM_VAR = "--zgl-page-zoom"/, "the var read is the one the layout actually sets");
+  assert.match(src, /getComputedStyle\(doc\.documentElement\)/, "read it from the document element");
+  // The zoom has to be sampled per gesture: the user can change it between two
+  // swipes, and a module-level constant would keep using the old one.
+  assert.match(src, /const downZoom = readPageZoom\(\);/, "sampled when the gesture starts");
+  assert.match(src, /gestureZoom = downZoom;/, "and carried for the whole drag");
+  assert.match(src, /unzoomPointer\(event\?\.clientX, gestureZoom\) - startX/, "and applied to the travel");
+});
+
+// --- the long-press picker and the drawer must not fight -------------------
+//
+// A touch on a gallery arms a 430ms timer that opens the row picker; the picker
+// is then scrubbed by the same horizontal drag the shell reads as "pull the
+// sidebar out". The two were indistinguishable, so at a zoom that widened the
+// edge zone the shell opened the drawer out from under the finger (130%), and at
+// a zoom that narrowed it the browser's own long-press started a text selection
+// and answered with `touchcancel`, which the card read as "released" -- closing
+// the picker the instant it appeared (90%).
+
+test("a press that starts on a gallery card is never the drawer's", () => {
+  // The veto lives in `onPointerDown`, which decides whether to track at all --
+  // a pure resolver cannot see it, so the wiring is pinned by source instead.
+  const src = read("./src/composables/useSidebarSwipe.js");
+  assert.match(src, /const onCard = closestOf\(target, CARD_SELECTOR\);/,
+    "the card test is evaluated at pointerdown");
+  assert.match(src, /if \(onCard\) return;/,
+    "the shell must not track a card press, even inside its edge zone");
+});
+
+test("the long-press arming window owns the gesture and browser cancellation cannot flash it closed", () => {
+  const page = read("./src/views/DashboardScopePage.vue");
+  assert.match(page, /onCardTouchStart[\s\S]*?this\.closeLongPressPicker\(\);[\s\S]*?this\.longPressPickerActive = true;/,
+    "ownership is published before the 430ms timer fires");
+  assert.match(page, /onCardTouchCancel\(\) \{[\s\S]*?if \(this\.longPressPickerOpen\) \{[\s\S]*?return;[\s\S]*?\}/,
+    "a browser cancellation after opening leaves the picker visible");
+  assert.doesNotMatch(page, /body\.style\.touchAction = "none"/,
+    "opening the picker must not change touch-action in the middle of a gesture");
+  assert.match(page, /class="longpress-picker-backdrop"[\s\S]*?@click="closeLongPressPicker\(true\)"/,
+    "a preserved picker still has an explicit dismissal path");
+});
+
+test("a long-press in progress owns the pointer, whether or not the picker is up", () => {
+  // The flag has to cover the *arming* window too: the drag that opens the picker
+  // is tracked from pointerdown, so gating only on "picker open" let the shell
+  // fire 'open' mid-hold.
+  assert.equal(resolveSidebarSwipe(pull({ longPressActive: true })), "",
+    "while a gallery long-press owns the pointer the shell stays out");
+  const src = read("./src/composables/useSidebarSwipe.js");
+  assert.match(src, /if \(input\.longPressActive\) return "";/,
+    "checked before any distance rule");
+
+  // And the dashboard must raise it from the moment the press starts, not when
+  // the picker opens.
+  const dash = read("./src/views/DashboardScopePage.vue");
+  assert.match(dash, /cardPressingKey: ""/, "state for the pressed card");
+  assert.match(dash, /this\.cardPressingKey = this\.previewItemKey\(item\);/,
+    "raised on touchstart, before the 430ms timer");
+  assert.match(dash, /this\.cardPressingKey = "";/,
+    "and cleared when the press ends");
+});
+
+test("the pressed card declares that the browser does not own the touch", () => {
+  const dash = read("./src/views/DashboardScopePage.vue");
+  // `.card-pressing` has to be bound in the template...
+  assert.match(dash, /'card-pressing': cardPressingKey === previewItemKey\(item\)/,
+    "the class is bound to the pressed card");
+  // ...and it has to actually take the gesture away from the browser. `pan-y`
+  // (inherited from .v-main) reserves the horizontal axis, which is the axis the
+  // picker scrubs on; `none` during the press is what stops the selection.
+  assert.match(dash, /\.home-card\.card-pressing \{\s*touch-action: none;\s*\}/,
+    "the pressing card opts out of browser panning entirely");
+  assert.match(dash, /\.home-card\.card-pressing,[\s\S]{0,120}user-select: none !important;/,
+    "and nothing inside it may be selected");
+  // The callout is what a sustained press over text raises on mobile.
+  assert.match(dash, /-webkit-touch-callout: none !important;/, "the long-press callout is suppressed");
+  // The picker's own scrub axis needs the same protection.
+  const host = dash.slice(dash.indexOf(".longpress-picker-host {"), dash.indexOf(".longpress-picker-card {"));
+  assert.match(host, /touch-action: none;/, "the picker host does not let the browser claim the drag");
+});
+
+test("a cancel cannot close a picker that is already open", () => {
+  const dash = read("./src/views/DashboardScopePage.vue");
+  const start = dash.indexOf("onCardTouchCancel() {");
+  const body = dash.slice(start, dash.indexOf("async onManualLoadMoreClick()", start));
+  // A `touchcancel` never means "the user chose something", so this path only
+  // dismisses before opening. Once visible, keeping it alive is safer than
+  // treating a browser/system cancellation as a completed selection.
+  assert.match(body, /if \(this\.longPressPickerOpen\)/, "an open picker is recognised");
+  assert.match(body, /return;/, "and the cancel is swallowed");
+  assert.doesNotMatch(body, /openHomeItem/, "a cancel must never navigate");
 });

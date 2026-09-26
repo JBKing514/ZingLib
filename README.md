@@ -94,6 +94,7 @@ ZINGLIB_IMAGE=zinglib:local docker compose -f Docker/quick_deploy_docker-compose
 
 > 部署细节、目录结构、代理设置 → [**STARTUP.md**](STARTUP.md)
 > 换机器 / 库搬家 / 重建数据库后，怎么找回算了几小时的向量与阅读历史 → [**BACKUP.md**](BACKUP.md)
+> 哪些改动进当前小版本、哪些要等下一个大版本 → [**ROADMAP.md**](ROADMAP.md)
 
 ---
 

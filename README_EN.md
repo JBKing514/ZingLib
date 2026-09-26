@@ -98,6 +98,7 @@ create the first admin account. On Option 1/2 the database host is `zinglib-db` 
 
 > Deployment details, directory layout, proxy settings -> [**STARTUP_EN.md**](STARTUP_EN.md)
 > New machine, relocated library, or a rebuilt database -- how to get back the hours of embeddings and your reading history -> [**BACKUP_EN.md**](BACKUP_EN.md)
+> Which changes go into the current patch line and which wait for the next minor -> [**ROADMAP_EN.md**](ROADMAP_EN.md)
 
 ---
 

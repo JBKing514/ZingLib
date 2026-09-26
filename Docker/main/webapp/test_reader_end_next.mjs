@@ -71,9 +71,14 @@ test("a hand-off that carries no title still yields a usable next entry", () => 
 
 test("the reader clamps to the end screen and keeps progress off it", () => {
   const page = read("./src/views/ReaderPage.vue");
+  const actions = read("./src/utils/readerPageActions.js");
 
-  assert.match(page, /const endScreenPage = computed\(\(\) => Math\.max\(1, Number\(totalPages\.value \|\| 1\)\) \+ 1\);/);
-  assert.match(page, /const onEndScreen = computed\(\(\) => Number\(currentPage\.value \|\| 1\) > Number\(totalPages\.value \|\| 1\)\);/);
+  // The predicates are shared with the long-press guard, so they are defined
+  // once in utils/readerPageActions and imported. Pin the definition, not a copy.
+  assert.match(actions, /export function readerEndScreenPage\(total\) \{\s*\n\s*return Math\.max\(1, Number\(total \|\| 1\)\) \+ 1;/);
+  assert.match(actions, /export function isReaderEndScreen\(page, total\) \{\s*\n\s*return Number\(page \|\| 1\) > Math\.max\(1, Number\(total \|\| 1\)\);/);
+  assert.match(page, /const endScreenPage = computed\(\(\) => readerEndScreenPage\(totalPages\.value\)\);/);
+  assert.match(page, /const onEndScreen = computed\(\(\) => !canOpenReaderRabbitHole\(currentPage\.value, totalPages\.value\)\);/);
   assert.match(page, /const progressPage = computed\(\(\) => Math\.max\(1, Math\.min\(Number\(totalPages\.value \|\| 1\), Number\(currentPage\.value \|\| 1\)\)\)\);/);
 
   // setPage's upper clamp is the end screen, not the last page...
@@ -91,6 +96,37 @@ test("the reader clamps to the end screen and keeps progress off it", () => {
 
   // The end screen draws no archive page, so it must not light the load overlay.
   assert.match(page, /if \(Number\(p \|\| 1\) > Number\(totalPages\.value \|\| 1\)\) \{/);
+});
+
+test("the rabbit hole cannot be opened from the end screen", async () => {
+  const actions = await import("./src/utils/readerPageActions.js");
+  const { canOpenReaderRabbitHole, isReaderEndScreen, readerEndScreenPage } = actions;
+
+  // The predicate itself.
+  assert.equal(readerEndScreenPage(10), 11, "the end screen sits one past the last page");
+  assert.equal(isReaderEndScreen(10, 10), false, "the last real page is still a real page");
+  assert.equal(isReaderEndScreen(11, 10), true);
+  assert.equal(canOpenReaderRabbitHole(1, 10), true, "any real page can seed a suggestion");
+  assert.equal(canOpenReaderRabbitHole(10, 10), true, "including the last one");
+  assert.equal(canOpenReaderRabbitHole(11, 10), false, "the end screen has no page to seed from");
+
+  // A one-page gallery: page 1 is real, page 2 is the end screen.
+  assert.equal(canOpenReaderRabbitHole(1, 1), true);
+  assert.equal(canOpenReaderRabbitHole(2, 1), false);
+
+  // Degenerate inputs must not open the overlay, and must not throw either.
+  assert.equal(canOpenReaderRabbitHole(0, 0), true, "a 0/0 read still resolves to page one");
+  assert.equal(isReaderEndScreen(undefined, undefined), false, "a missing total is treated as one page");
+
+  // And the reader has to actually consult it before arming the long-press timer.
+  const page = read("./src/views/ReaderPage.vue");
+  const handler = page.slice(page.indexOf("function onPointerDown(event) {"), page.indexOf("function onPointerMove(event) {"));
+  const guardAt = handler.indexOf("canOpenReaderRabbitHole(currentPage.value, totalPages.value)");
+  const timerAt = handler.indexOf("longPressTimer = window.setTimeout(");
+  assert.ok(guardAt > -1, "the long-press handler must consult the guard");
+  assert.ok(timerAt > -1, "and still arm the timer for real pages");
+  assert.ok(guardAt < timerAt, "the guard has to run BEFORE the timer is armed, or it guards nothing");
+  assert.match(handler, /return;/, "a refused long-press must leave early");
 });
 
 test("leaving the gallery takes two deliberate forward actions", () => {

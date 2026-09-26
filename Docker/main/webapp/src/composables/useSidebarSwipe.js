@@ -26,6 +26,42 @@ export const SIDEBAR_SWIPE_TRAVEL = 56;
 // The drag has to be this much more horizontal than vertical to count.
 export const SIDEBAR_SWIPE_BIAS = 1.2;
 
+/**
+ * The page zoom factor the app renders at (`#app { zoom: var(--zgl-page-zoom) }`).
+ *
+ * CSS `zoom` shrinks the *layout* viewport while `window.innerWidth` keeps
+ * reporting the unzoomed width, and a `clientX` read from a pointer inside the
+ * zoomed subtree is reported in that zoomed space. Both halves of the gesture
+ * decision are therefore in different units at any zoom but 100%:
+ *
+ *   * the edge zone is `innerWidth * 1/3` -- unzoomed CSS px;
+ *   * `dx` / `startX` are visual px, which are `1 / zoom` times as many CSS px.
+ *
+ * At 90% a third of the screen was no longer a third, and the 56px travel
+ * threshold silently became 50px, which is how "the swipe stops working when I
+ * zoom out" reads. Normalising the pointer numbers back into CSS px puts both
+ * sides in the same unit again.
+ */
+export const SIDEBAR_SWIPE_ZOOM_VAR = "--zgl-page-zoom";
+
+/** Read the current zoom factor from the document, defaulting to 1. */
+export function readPageZoom(doc = (typeof document !== "undefined" ? document : null)) {
+  if (!doc || typeof doc.defaultView?.getComputedStyle !== "function") return 1;
+  const raw = doc.defaultView.getComputedStyle(doc.documentElement).getPropertyValue(SIDEBAR_SWIPE_ZOOM_VAR);
+  const n = Number(String(raw).trim());
+  // A missing / malformed value means "no zoom" rather than "zoom to zero" --
+  // dividing by it would otherwise make every drag infinite.
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** Convert a zoomed pointer coordinate back into the layout's CSS pixels. */
+export function unzoomPointer(value, zoom) {
+  const n = Number(value);
+  const z = Number(zoom);
+  if (!Number.isFinite(n)) return 0;
+  return Number.isFinite(z) && z > 0 ? n / z : n;
+}
+
 // A horizontal drag that starts on a gallery belongs to that gallery (the
 // long-press row picker scrubs through its row), never to the shell.
 const CARD_SELECTOR = ".home-card, .preview-card, .tag-explore-item-card";
@@ -47,11 +83,23 @@ const BLOCKED_SELECTOR = [
 /**
  * The whole decision, with no DOM in it, so the rules above can be tested
  * directly. Returns "", "open" or "close".
+ *
+ * `startX` / `dx` must already be in the document's CSS pixels (see
+ * `unzoomPointer`); `viewportWidth` is `window.innerWidth`, which is already in
+ * that unit.
+ *
+ * `longPressActive` means "a gallery long-press owns the pointer right now".
+ * It covers both the arming window (finger down, 430ms timer running) and the
+ * open picker, because in both states the same horizontal drag is the gallery's
+ * scrub control rather than the shell's drawer pull. Keying it only to "picker
+ * open" was not enough: the drag that *opens* the picker is tracked from
+ * `pointerdown`, so at a zoom level that widens the edge zone the shell would
+ * fire "open" out from under the user's finger and the two gestures fought.
  */
 export function resolveSidebarSwipe(input = {}) {
   if (!input.enabled || input.blocked) return "";
-  // The dashboard's long-press row picker owns the pointer for as long as it is
-  // on screen: it is scrubbed by the same horizontal drag the shell would read as
+  // The dashboard's long-press picker owns the pointer for as long as it is on
+  // screen: it is scrubbed by the same horizontal drag the shell would read as
   // "pull the sidebar out". Its backdrop only covers the page *after* the picker
   // opens, so the drag that opened it -- and every drag on it -- would otherwise
   // be stolen mid-gesture. One flag, checked before any distance rule.
@@ -95,6 +143,10 @@ export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
   let startX = 0;
   let startY = 0;
   let startEl = null;
+  // The zoom in force when the gesture began. Read once, at pointerdown: the
+  // whole drag has to be measured in one unit, and re-reading mid-gesture could
+  // rescale the thresholds under the user's finger.
+  let gestureZoom = 1;
 
   function sidebarEl() {
     return typeof document !== "undefined" ? document.querySelector(".app-sidebar-drawer") : null;
@@ -111,9 +163,19 @@ export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
     if (event?.isPrimary === false || !["touch", "pen"].includes(String(event?.pointerType || ""))) return;
     const target = event?.target || null;
     if (closestOf(target, BLOCKED_SELECTOR)) return;
+    const downZoom = readPageZoom();
+    const downX = unzoomPointer(event?.clientX, downZoom);
+    // A touch that lands on a gallery card belongs to that card from the first
+    // event. The card is already arming its 430ms long-press and the drag that
+    // follows is the picker's scrub. Letting the shell keep the same pointer in
+    // the edge zone creates a race: it can open the drawer before the picker has
+    // had time to publish its active flag, especially under CSS zoom.
+    const onCard = closestOf(target, CARD_SELECTOR);
+    if (onCard) return;
     pointerId = Number(event?.pointerId ?? -1);
-    startX = Number(event?.clientX || 0);
-    startY = Number(event?.clientY || 0);
+    gestureZoom = downZoom;
+    startX = downX;
+    startY = unzoomPointer(event?.clientY, downZoom);
     startEl = target;
     tracking = true;
   }
@@ -132,8 +194,8 @@ export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
       enabled: true,
       blocked: false,
       longPressActive: !!(longPressActive && longPressActive.value),
-      dx: Number(event?.clientX || 0) - startX,
-      dy: Number(event?.clientY || 0) - startY,
+      dx: unzoomPointer(event?.clientX, gestureZoom) - startX,
+      dy: unzoomPointer(event?.clientY, gestureZoom) - startY,
       startX,
       viewportWidth: Number(window.innerWidth || 0),
       drawerOpen: drawer ? !!drawer.value : false,

@@ -247,6 +247,7 @@ import ReaderTopBar from "../components/reader/ReaderTopBar.vue";
 import ReaderQuickSettings from "../components/reader/ReaderQuickSettings.vue";
 import ReaderLongPressSearch from "../components/reader/ReaderLongPressSearch.vue";
 import ReaderEndPanel from "../components/reader/ReaderEndPanel.vue";
+import { canOpenReaderRabbitHole, readerEndScreenPage } from "../utils/readerPageActions";
 
 const route = useRoute();
 const router = useRouter();
@@ -287,6 +288,13 @@ let endRecsSeq = 0;
 let longPressTimer = 0;
 let bookmarkSyncTimer = 0;
 let lastReadEventAt = 0;
+// Which gallery `lastReadEventAt` belongs to. The throttle exists to coalesce
+// repeated events for *one* reading session, not to suppress a different
+// gallery's first read -- and the router reuses this component when moving
+// gallery -> gallery (a rabbit-hole suggestion, the end screen's "next"), so a
+// bare timestamp swallowed the new gallery's history entry whenever the user
+// switched within 15s.
+let lastReadEventArcid = "";
 let readQualifyTimer = 0;
 let readTurnCount = 0;
 let readDwellQualified = false;
@@ -400,8 +408,10 @@ const spreadDouble = computed(() => readerMode.value === "paged" && String(sprea
 const pageStep = computed(() => (spreadDouble.value ? 2 : 1));
 // The end screen is addressable as page N+1 but is not a real page: nothing is
 // rendered from the archive there, and progress must never be recorded there.
-const endScreenPage = computed(() => Math.max(1, Number(totalPages.value || 1)) + 1);
-const onEndScreen = computed(() => Number(currentPage.value || 1) > Number(totalPages.value || 1));
+// `endScreenPage`/`onEndScreen` come from utils/readerPageActions so the long-press
+// guard and this addressable page cannot drift apart.
+const endScreenPage = computed(() => readerEndScreenPage(totalPages.value));
+const onEndScreen = computed(() => !canOpenReaderRabbitHole(currentPage.value, totalPages.value));
 const progressPage = computed(() => Math.max(1, Math.min(Number(totalPages.value || 1), Number(currentPage.value || 1))));
 // "Next gallery" is only meaningful when this gallery came out of a feed the
 // reader was handed (see readerQueueStore); opened from a bare URL there is no
@@ -957,6 +967,10 @@ function onPointerDown(event) {
   touchStart.value = { x: Number(event?.clientX || 0), y: Number(event?.clientY || 0) };
   longPressTriggered.value = false;
   clearLongPressTimer();
+  // The rabbit hole is seeded from the current page, so it has nothing to suggest
+  // on the end screen (page N+1). Long-pressing there used to open an overlay
+  // that could only ever be empty; we simply do not arm the timer in that state.
+  if (!canOpenReaderRabbitHole(currentPage.value, totalPages.value)) return;
   longPressTimer = window.setTimeout(() => {
     longPressTriggered.value = true;
     longPressSearchOpen.value = true;
@@ -1008,8 +1022,12 @@ async function recordReadEvent(source = "reader-ui") {
   const nowMs = Date.now();
   if (!arcid.value) return;
   if (!readDwellQualified && readTurnCount <= 0) return;
-  if (nowMs - lastReadEventAt < 15000) return;
+  // The throttle is per gallery. A different gallery is a new reading, and its
+  // first qualifying event must go through even if the previous gallery wrote
+  // one a moment ago.
+  if (String(arcid.value) === lastReadEventArcid && nowMs - lastReadEventAt < 15000) return;
   lastReadEventAt = nowMs;
+  lastReadEventArcid = String(arcid.value);
   const reason = readTurnCount > 0 ? "page_turn" : "dwell_3s";
   const turns = Number(readTurnCount || 0);
   readTurnCount = 0;

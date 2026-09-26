@@ -10,6 +10,19 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.0.4] - 2026-09-26
+
+- The sidebar edge gesture works at any page zoom. The edge zone was measured in unzoomed CSS pixels while the pointer was read in zoomed ones, so at anything other than 100% the reachable zone was the wrong width and the travel threshold was scaled with it; both sides are normalised against the live zoom now.
+- The mobile long-press gallery picker stays open. The touch that summoned it also reported its own release, which committed a selection before the picker had been seen; a short opening grace period distinguishes that release from a real pick.
+- A gallery long-press is no longer contested by the browser or the sidebar, at any page zoom. The press used to be fought over three ways: the browser's own long-press text selection cancelled the touch and closed the picker the instant it appeared (90% zoom), and the drawer's edge swipe opened the sidebar out from under the finger mid-hold (130% zoom). The card claims the touch from pointerdown for the whole press, the shell does not track a press that starts on a card at all, and a cancelled opening touch leaves the picker up for a fresh one -- tapping the backdrop is the explicit exit.
+- On a left-docked tablet preview pane the feed now makes room for it, the same as the right-docked one. The left side floated over the first column of cards while the right side pushed them aside, so the same feature looked like two different ones depending on which hand you used.
+- Closing the preview pane no longer brings back the previous gallery's card. The close went through router history and a fixed delay, so a route that still carried the old preview key could be re-resolved mid-teardown; the pane is now torn down from local state first and the URL is corrected with a replace.
+- Editing a gallery's metadata refreshes the open preview card in place. The hydration handler opened with a call to a method that exists nowhere in the tree, so it threw before its merge ran and the card kept the tags the user had just changed.
+- A quick metadata edit from a preview card refreshes only that card. The edit used to rebuild the entire feed, which dropped the scroll position and flickered every other row for a change that touched one gallery; the server's answer is now folded into the row already on screen, with a full refresh kept as the fallback for a refused edit.
+- Long-pressing on the reader's end screen no longer opens an empty rabbit-hole overlay. The overlay is seeded from the current page's own vector and tags, and the virtual page past the last one has neither.
+- A reading started from a rabbit-hole suggestion is now recorded in history. The read-event throttle was keyed to the component rather than the gallery, so the first event of the next gallery fell inside a window that had already been used.
+- Search results survive a trip into a gallery and back. The search offset was remembered against the list it was measured on; it is invalidated when the result set is replaced, and a slow first load no longer discards it.
+
 ## [1.0.3] - 2026-09-25
 
 - Danger-zone database settings no longer auto-save; a connection test must pass before they can be written

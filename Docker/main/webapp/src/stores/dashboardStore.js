@@ -697,6 +697,43 @@ export const useDashboardStore = defineStore("dashboard", () => {
     }
   }
 
+  /**
+   * Fold a freshly hydrated row back into every list that already holds it.
+   *
+   * The preview panes are handed a row object at open time; a metadata edit
+   * afterwards changes the server's answer but not that snapshot. Replacing the
+   * whole feed (a reset) is too coarse -- it drops the scroll position and
+   * reorders the list under the user -- so patch by identity instead.
+   *
+   * Shallow merge on purpose: the incoming row is the same shape from the same
+   * endpoint, and a deep merge would resurrect keys the server deliberately
+   * removed (a cleared title comes back as an empty string, not "absent").
+   */
+  function patchHomeItem(item) {
+    const key = String(item?.arcid || "").trim();
+    if (!key) return;
+    const row = (item && typeof item === "object") ? item : {};
+    const patchState = (stateRef) => {
+      stateRef.value = {
+        ...(stateRef.value || {}),
+        items: (stateRef.value?.items || []).map((cur) => (_matchItemKey(row.source, cur, key)
+          ? { ...cur, ...row, meta: { ...(cur?.meta || {}), ...(row?.meta || {}) } }
+          : cur)),
+      };
+    };
+    patchState(homeHistory);
+    patchState(homeLocal);
+    patchState(homeSearchState);
+    patchState(homeLocalFavorite);
+    if (String(mobilePreviewItem.value?.arcid || "").trim() === key) {
+      mobilePreviewItem.value = {
+        ...(mobilePreviewItem.value || {}),
+        ...row,
+        meta: { ...(mobilePreviewItem.value?.meta || {}), ...(row?.meta || {}) },
+      };
+    }
+  }
+
   function scrollToTop() {
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1288,6 +1325,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
     isFeedStale,
     refreshCurrentHomeFeed,
     setItemRating,
+    patchHomeItem,
     scrollToTop,
     onMobilePreviewToggle,
     onCoverClick,

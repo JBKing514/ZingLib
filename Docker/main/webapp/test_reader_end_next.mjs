@@ -89,9 +89,11 @@ test("the reader clamps to the end screen and keeps progress off it", () => {
   assert.match(page, /if \(turned && !isEnd\) \{/);
 
   // Progress must never be published as page N+1, or the preview card would
-  // offer "resume at" a page that does not exist.
-  assert.doesNotMatch(page, /previewProgressStore\.publish\(\{ arcid: arcid\.value, page: currentPage\.value \}\)/);
-  assert.equal((page.match(/previewProgressStore\.publish\(\{ arcid: arcid\.value, page: progressPage\.value \}\)/g) || []).length, 2);
+  // offer "resume at" a page that does not exist. The call also carries the
+  // manifest's page count so the card's progress capsule has a denominator
+  // (round 62); the page half of the payload is what this pins.
+  assert.doesNotMatch(page, /previewProgressStore\.publish\(\{ arcid: arcid\.value, page: currentPage\.value/);
+  assert.equal((page.match(/previewProgressStore\.publish\(\{ arcid: arcid\.value, page: progressPage\.value/g) || []).length, 2);
   assert.match(page, /page: Number\(progressPage\.value \|\| 1\),/);
 
   // The end screen draws no archive page, so it must not light the load overlay.
@@ -187,6 +189,21 @@ test("the end panel is click-through except for its two islands", () => {
   assert.match(page, /<ReaderEndPanel\s*\n\s*inline/);
   assert.match(page, /@next-gallery="goNextGallery"/);
   assert.match(page, /@open-item="openEndRec"/);
+});
+
+test("guess-you-like opens the dashboard PreviewCard instead of starting a reader", () => {
+  const page = read("./src/views/ReaderPage.vue");
+  const store = read("./src/stores/dashboardStore.js");
+  const dashboard = read("./src/views/DashboardScopePage.vue");
+  const start = page.indexOf("function openEndRec(item) {");
+  const end = page.indexOf("\n}", start) + 2;
+  const handler = page.slice(start, end);
+  assert.match(handler, /setPendingPreviewItem\(\{ \.\.\.\(item \|\| \{\}\), source: "works", arcid: next \}\)/);
+  assert.match(handler, /name: "dashboard", query: \{ pv: `works:\$\{next\}`, detail: "1" \}/);
+  assert.doesNotMatch(handler, /name: "reader"/);
+  assert.match(store, /function takePendingPreviewItem\(key = ""\)/);
+  assert.match(dashboard, /const hit = this\.takePendingPreviewItem\(pv\)/);
+  assert.match(dashboard, /query\?\.detail[\s\S]*?=== "1"/);
 });
 
 test("the dashboard hands over the order that is on screen", () => {

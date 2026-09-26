@@ -477,11 +477,18 @@ export const useSettingsStore = defineStore("settings", () => {
     if (!config.value.READER_DIRECTION) config.value.READER_DIRECTION = "ltr";
     if (!config.value.READER_MODE) config.value.READER_MODE = "paged";
     if (!config.value.READER_FIT_MODE) config.value.READER_FIT_MODE = "contain";
-    if (!config.value.READER_IMAGE_QUALITY_MODE) config.value.READER_IMAGE_QUALITY_MODE = "high";
+    if (!config.value.READER_IMAGE_QUALITY_MODE) config.value.READER_IMAGE_QUALITY_MODE = "auto";
     if (!config.value.LOCAL_THUMB_PRESET) config.value.LOCAL_THUMB_PRESET = "mid";
     if (!config.value.READER_WHEEL_POSITION) config.value.READER_WHEEL_POSITION = "bottom";
     if (config.value.READER_SWIPE_ENABLED === undefined) config.value.READER_SWIPE_ENABLED = true;
     if (config.value.READER_TAP_TO_TURN === undefined) config.value.READER_TAP_TO_TURN = true;
+    // Global shortcuts. The key bindings are a single string so a future UI can
+    // let the user rebind without a schema change; parsing lives in
+    // `utils/readerShortcuts.js` (pure, tested).
+    if (!config.value.READER_KEY_PREV) config.value.READER_KEY_PREV = "a";
+    if (!config.value.READER_KEY_NEXT) config.value.READER_KEY_NEXT = "d";
+    if (config.value.READER_WHEEL_PAGING_ENABLED === undefined) config.value.READER_WHEEL_PAGING_ENABLED = false;
+    if (config.value.READER_WHEEL_NATURAL === undefined) config.value.READER_WHEEL_NATURAL = false;
     if (config.value.READER_PAGE_ANIM_ENABLED === undefined) config.value.READER_PAGE_ANIM_ENABLED = true;
     config.value.READER_HIDE_START_BUTTON = false;
     if (config.value.READER_HIDE_APP_UI === undefined) config.value.READER_HIDE_APP_UI = true;
@@ -1016,8 +1023,8 @@ export const useSettingsStore = defineStore("settings", () => {
     config.value.READER_PRELOAD_COUNT = Number.isFinite(v) ? Math.max(10, Math.min(20, Math.round(v))) : 10;
   });
   watch(() => config.value.READER_IMAGE_QUALITY_MODE, () => {
-    const mode = String(config.value.READER_IMAGE_QUALITY_MODE || "high").trim().toLowerCase();
-    config.value.READER_IMAGE_QUALITY_MODE = ["low", "mid", "high", "original"].includes(mode) ? mode : "high";
+    const mode = String(config.value.READER_IMAGE_QUALITY_MODE || "auto").trim().toLowerCase();
+    config.value.READER_IMAGE_QUALITY_MODE = ["auto", "low", "mid", "high", "original"].includes(mode) ? mode : "auto";
   });
   watch(() => config.value.LOCAL_THUMB_PRESET, () => {
     const preset = String(config.value.LOCAL_THUMB_PRESET || "mid").trim().toLowerCase();

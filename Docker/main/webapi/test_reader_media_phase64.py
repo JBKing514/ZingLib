@@ -19,11 +19,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     from webapi.routers.media import _normalize_thumb_preset, _work_thumb_cache_file
-    from webapi.routers.reader import _normalize_reader_quality_mode, _reader_session_view, _reader_transform_image_bytes
+    from webapi.routers.reader import (
+        _normalize_reader_quality_mode,
+        _parse_reader_res,
+        _reader_session_view,
+        _reader_transform_image_bytes,
+    )
 except ImportError:
     sys.path.insert(0, "/app")
     from webapi.routers.media import _normalize_thumb_preset, _work_thumb_cache_file
-    from webapi.routers.reader import _normalize_reader_quality_mode, _reader_session_view, _reader_transform_image_bytes
+    from webapi.routers.reader import (
+        _normalize_reader_quality_mode,
+        _parse_reader_res,
+        _reader_session_view,
+        _reader_transform_image_bytes,
+    )
 
 
 def assert_true(condition: bool, message: str) -> None:
@@ -35,6 +45,13 @@ def build_fixture_bytes(size: tuple[int, int] = (2000, 1500)) -> bytes:
     img = Image.new("RGB", size, (80, 140, 220))
     bio = io.BytesIO()
     img.save(bio, format="JPEG", quality=95)
+    return bio.getvalue()
+
+
+def build_animated_gif_bytes(size: tuple[int, int] = (1000, 800)) -> bytes:
+    frames = [Image.new("RGB", size, (200, 40, 40)), Image.new("RGB", size, (40, 40, 200))]
+    bio = io.BytesIO()
+    frames[0].save(bio, format="GIF", save_all=True, append_images=frames[1:], duration=200, loop=0)
     return bio.getvalue()
 
 
@@ -56,8 +73,42 @@ def main() -> int:
     assert_true(low_type == "image/webp", "low-quality reader output should be webp")
     assert_true(original_type == "image/jpeg", "original reader mode should preserve original mime type")
     assert_true(len(low_bytes) < len(raw_bytes), "low-quality reader output should be smaller than original")
+    with Image.open(io.BytesIO(low_bytes)) as low_image:
+        assert_true(max(low_image.size) == 360, "low reader tier should be a 360px Lanczos derivative")
     assert_true(original_bytes == raw_bytes, "original reader mode should keep source bytes unchanged")
     assert_true(_normalize_reader_quality_mode("weird") == "high", "unknown reader quality should fall back to high")
+
+    print("[2b] Auto resolution: downsample only above the screen hint")
+    # `auto` must stay a mode: the client pairs it with a `res` hint, and the
+    # server downsamples only pages larger than that hint.
+    assert_true(_normalize_reader_quality_mode("auto") == "auto", "auto must stay a mode, not collapse to a fixed tier")
+    assert_true(_parse_reader_res("1920x1080") == (1920, 1080), "a well-formed hint should parse")
+    assert_true(_parse_reader_res("") is None, "no hint should parse to None")
+    assert_true(_parse_reader_res("bogus") is None, "a malformed hint should parse to None")
+    assert_true(_parse_reader_res("50x40") is None, "a sub-screen hint should be rejected as None")
+    assert_true(_parse_reader_res("99999x99999") is None, "an absurd hint should be rejected as None")
+    # The 2000x1500 fixture with no hint: byte-for-byte pass-through.
+    auto_bytes, auto_type = _reader_transform_image_bytes(raw_bytes, "image/jpeg", "auto")
+    assert_true(auto_bytes == raw_bytes and auto_type == "image/jpeg", "auto without a hint must pass through unchanged")
+    # Hint 1000x600: the page exceeds it, so it is Lanczos-downsampled to a
+    # contain-fit (scale 0.4 -> 800x600; a fill would have been 1000x750).
+    auto_hint_bytes, auto_hint_type = _reader_transform_image_bytes(raw_bytes, "image/jpeg", "auto", "1000x600")
+    assert_true(auto_hint_type == "image/webp", "auto with an exceeded hint should be a webp derivative")
+    with Image.open(io.BytesIO(auto_hint_bytes)) as auto_image:
+        assert_true(tuple(auto_image.size) == (800, 600), "auto should contain-fit the page into the screen hint (800x600)")
+    assert_true(len(auto_hint_bytes) < len(raw_bytes), "auto derivative should be smaller than the source")
+    # Hint the page already fits (4000x3000): original bytes, animation and all.
+    auto_fit_bytes, auto_fit_type = _reader_transform_image_bytes(raw_bytes, "image/jpeg", "auto", "4000x3000")
+    assert_true(auto_fit_bytes == raw_bytes and auto_fit_type == "image/jpeg", "auto with a hint the page fits must keep the original bytes")
+    # A malformed hint degrades to no hint, never to a surprise tier.
+    auto_bogus_bytes, auto_bogus_type = _reader_transform_image_bytes(raw_bytes, "image/jpeg", "auto", "not-a-hint")
+    assert_true(auto_bogus_bytes == raw_bytes and auto_bogus_type == "image/jpeg", "auto with a malformed hint must pass through unchanged")
+    # An oversized animation is served as-is: resizing it would mean re-encoding
+    # every frame, which this path does not attempt -- flattening it to the
+    # first frame would destroy content, so it stays untouched even oversized.
+    anim_bytes = build_animated_gif_bytes()
+    anim_out, anim_type = _reader_transform_image_bytes(anim_bytes, "image/gif", "auto", "500x500")
+    assert_true(anim_out == anim_bytes and anim_type == "image/gif", "an oversized animation must pass through untouched")
 
     print("[3] Reader session status exposes preload progress")
     session = {

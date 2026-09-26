@@ -16,6 +16,8 @@ function quickDialog(api = async () => ({ items: [] })) {
     // Every component the page registers has to be stubbed here: an undefined
     // identifier in `components: {...}` throws before a single test runs.
     ...namespaces, PreviewCard: {}, TagExploreOverlay: {}, FeedPager: {}, FeedPullToPage: {},
+    // The progress capsule joined `components` in round 62.
+    CardProgressBadge: {},
     useSettingsStore: () => ({ customNamespaceDefs: [{ key: "my-space", color: "#123456" }] }),
     getHomeTagSuggest: api,
     batchUpdateLocalMeta: async payload => saved.push(payload),

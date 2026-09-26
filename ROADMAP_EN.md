@@ -18,14 +18,14 @@ One question decides it: **would the user notice that there is now one more (or 
 
 **Rule 2 — a `feat` you receive is logged, not implemented, that round.**
 
-If a `feat` arrives in any session (or a `ui` item that the test above classifies as a `feat`), **the round only writes it into the `1.1.0` bucket below — no implementation code**.
-Implementation starts only once the matching branch is **actually cut** (e.g. `git checkout -b v1.1.0-beta`); that is when the bucket is opened and its entries move into the workflow.
+If a `feat` arrives in any session (or a `ui` item that the test above classifies as a `feat`), **the round only writes it into the most recent `feat` bucket that has not started work (currently `1.2.0`) — no implementation code**.
+Implementation starts only once the matching branch is **actually cut** (e.g. `git checkout -b v1.2.0-beta`); that is when the bucket is opened and its entries move into the workflow.
 
 > This is an explicit request from the maintainer: he recognises a tendency to slip feats into patch releases, so **logging** and **implementing** are separated in *time* rather than left to a round's self-discipline. Writing it down makes it a contract; going around it breaks it.
 
 **Rule 3 — an entry may only leave its bucket for one of three reasons.**
 
-An entry leaves the `1.1.0` bucket only when: (1) the corresponding branch has been cut and work has begun; (2) the maintainer explicitly reclassifies it as a `fix`; or (3) the maintainer explicitly drops it. It is **not** allowed to *quietly* implement an entry because it happened to be convenient — an opportunistically implemented `feat` must be logged retroactively, or reverted.
+An entry leaves its `feat` bucket only when: (1) the corresponding branch has been cut and work has begun; (2) the maintainer explicitly reclassifies it as a `fix`; or (3) the maintainer explicitly drops it. It is **not** allowed to *quietly* implement an entry because it happened to be convenient — an opportunistically implemented `feat` must be logged retroactively, or reverted.
 
 ## 1.0.x — `fix` only
 
@@ -45,7 +45,10 @@ What has to be repaired before the `1.0.4` release.
 
 ## 1.1.0 — `feat` only
 
-**None of these may be implemented before `1.1.0-beta` is cut.** The current round (`1.0.4`) only did the `1.0.x` bucket above.
+**The `v1.1.0-beta` branch is cut**, so this bucket *is* that version's worklist. Completed entries are recorded per `CHANGELOG.md`.
+
+> **Done this round (2026-09-26)**: `feat-6`, `feat-9`, `ui-10`, `ui-11`, `ui-12`, `feat-13`, `feat-14`, `ui-15`, `ui-17`, `feat-16`.
+> Every entry in this bucket is **complete**.
 
 | # | What | Why it is not a patch item |
 | --- | --- | --- |
@@ -54,6 +57,19 @@ What has to be repaired before the `1.0.4` release.
 | ui-10 | The thumbnail wheel should show a **placeholder while fast-scrolling** | Introduces a new state (placeholder) and the loading strategy that comes with it → `feat`, not paint |
 | ui-11 | "Refresh" is possibly redundant and could be **removed** | Removes something the user can do — a contraction of the feature surface → `feat` |
 | ui-12 | Mobile filter buttons should **drop their text** to match PC and save space | Purely cosmetic, no behaviour change → it looks like `ui`, but the maintainer has explicitly filed it under `1.1.0` |
+| feat-13 | **Global reader shortcuts**: configurable page-turn keys (default `A`/`D`); mouse-wheel paging with 150 ms damping and a **direction reversal** option (macOS natural scrolling). Volume-key paging was removed after Android device testing confirmed that browsers do not receive system volume events. | Two new input channels plus a keybinding UI; the user plainly sees that new inputs exist → `feat` |
+| feat-14 | A **private / incognito reading mode** on the home page (🕶️ **blocks history and bookmark writes**), with the UI **shifting its whole colour tone** to signal it, and the toggle placed **next to folder mode** | Adds a mode that **changes write semantics** (history/bookmarks are intercepted); both interaction and appearance change → `feat` |
+| ui-15 | Remove the "browse the local library by folder structure" text on the home page | Deletes a piece of user-visible copy — a contraction of the feature surface → `feat` |
+| feat-16 | **Auto resolution**: the reader's auto quality tier **Lanczos-downsamples** pages **larger than the screen** to a contain-fit of it (shrink only, never enlarge); pages that already fit, and requests without a usable hint, are **served as their original bytes**. The page URL carries a `res=WxH` screen hint, and the server caches derivatives on disk keyed by source hash + resolution | A whole new transport/quality semantic the user can feel (big scans cost far less bandwidth and decode) → `feat`. **Implemented on `v1.1.0-beta`** (see `CHANGELOG.md`) |
+| ui-17 | A **progress capsule** on home gallery cards: same size as the existing category capsule, in **orange (deep orange)** — deliberately off every colour the system already uses, and matching the "history" association; it holds a **ring on the left and a percentage on the right**. On a **full card** it sits at the cover's **bottom-left**, mirroring the category capsule at the bottom-right; on a **compact card** it sits at the bottom-left; in the **list view** it is prepended to the metadata string (`Local • 2026/09/25 10:33 • Non-H • 63P`), at its **leftmost position** | Adds a user-perceivable information block that has to be laid out across three card shapes → `feat` |
+
+## 1.2.0 — the next minor's `feat` bucket (logged only, not implemented)
+
+**The branch has not been cut** (wait until `1.1.0` is tested and merged, then cut `v1.2.0-beta`). Until that branch really exists, entries here are **logged only — no code**.
+
+| # | What | Why it is not a patch item |
+| --- | --- | --- |
+| feat-1 | **OPDS**: expose the local library as an OPDS catalog for third-party readers (Panels, KyBook, Moon+ Reader, ...) | A whole new outward protocol surface and data exit; the user plainly gains a new way to use the library → `feat` |
 
 ## Relationship to the other files
 

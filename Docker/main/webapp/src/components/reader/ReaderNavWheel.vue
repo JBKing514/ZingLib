@@ -23,6 +23,9 @@
           :style="wheelItemStyle(entry.page)"
           @click="onThumbClick(entry, $event)"
         >
+          <div class="wheel-thumb-placeholder" aria-hidden="true">
+            <v-icon size="24">mdi-image-outline</v-icon>
+          </div>
           <img v-if="!canUseSprite(entry)" :src="String(entry.src || '')" alt="thumb" class="wheel-thumb" loading="lazy" />
           <div v-else class="wheel-thumb wheel-thumb-sprite" :style="wheelSpriteStyle(entry)" />
           <div class="wheel-mask" />
@@ -83,6 +86,21 @@ const dragState = ref({
 // Set the moment a gesture becomes a real drag; consumed by the click that the
 // same gesture would otherwise synthesise on release.
 let draggedThisGesture = false;
+let lastHapticPage = -1;
+
+function emitPreviewPage(page) {
+  const next = Number(page || 1);
+  emit("preview-page", next);
+  if (next === lastHapticPage) return;
+  lastHapticPage = next;
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(8);
+    }
+  } catch {
+    // Haptics are optional; unsupported browsers keep normal wheel behavior.
+  }
+}
 
 const cursorPageSafe = computed(() => {
   const max = Math.max(1, Number(props.totalPages || 1));
@@ -226,13 +244,13 @@ function wheelItemStyle(page) {
 
 function previewStep(step) {
   const next = Math.max(1, Math.min(Number(props.totalPages || 1), Number(cursorPageSafe.value || 1) + step));
-  if (next !== Number(cursorPageSafe.value || 1)) emit("preview-page", next);
+  if (next !== Number(cursorPageSafe.value || 1)) emitPreviewPage(next);
 }
 
 function onSliderChange(v) {
   const raw = Number(v || 1);
   const max = Math.max(1, Number(props.totalPages || 1));
-  emit("preview-page", Math.max(1, Math.min(max, raw)));
+  emitPreviewPage(Math.max(1, Math.min(max, raw)));
 }
 
 function onWheelPointerDown(event) {
@@ -290,7 +308,7 @@ function onWheelPointerMove(event) {
   if (next === origin.emittedPage) return;
   draggedThisGesture = true;
   dragState.value = { ...origin, emittedPage: next };
-  emit("preview-page", next);
+  emitPreviewPage(next);
 }
 
 function onWheelPointerEnd(event) {
@@ -430,6 +448,7 @@ function canUseSprite(entry) {
 }
 
 .wheel-track-clip {
+  position: relative;
   pointer-events: auto;
   overflow: hidden;
   touch-action: none;
@@ -448,6 +467,18 @@ function canUseSprite(entry) {
 
 .wheel-track {
   position: relative;
+}
+
+.wheel-thumb-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(24, 28, 38, 0.92);
+  pointer-events: none;
 }
 
 .wheel-track-bottom {
@@ -485,6 +516,7 @@ function canUseSprite(entry) {
   background: rgba(0, 0, 0, 0.65);
   transition: background 0.25s ease;
   pointer-events: none;
+  z-index: 2;
 }
 
 .wheel-item.active .wheel-mask {
@@ -499,6 +531,7 @@ function canUseSprite(entry) {
   align-items: flex-end;
   justify-content: flex-end;
   pointer-events: none;
+  z-index: 3;
 }
 
 .wheel-label {
@@ -528,6 +561,9 @@ function canUseSprite(entry) {
 }
 
 .wheel-thumb {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -535,7 +571,7 @@ function canUseSprite(entry) {
 }
 
 .wheel-thumb-sprite {
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: transparent;
 }
 
 .wheel-slider-row {

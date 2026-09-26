@@ -20,6 +20,24 @@ body,
   min-height: 100dvh;
 }
 
+/* Private mode changes the application palette, never the rendered media.
+   A filter on #app also filters every descendant bitmap, which made gallery
+   covers look colour-corrected. Vuetify consumes these theme variables for its
+   chrome and surfaces while <img>, video and canvas pixels remain untouched. */
+#app.zgl-private-mode .v-application {
+  --v-theme-primary: 126, 87, 194;
+  --v-theme-secondary: 0, 150, 136;
+  --v-theme-info: 92, 107, 192;
+  --v-theme-surface: 31, 30, 46;
+  --v-theme-background: 20, 20, 32;
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+#app.zgl-private-mode .app-header,
+#app.zgl-private-mode .app-sidebar-drawer {
+  background-color: rgb(35, 31, 53) !important;
+}
+
 .v-application {
   min-height: 100dvh !important;
 }
@@ -179,6 +197,82 @@ canvas {
   border-radius: 10px;
   text-transform: none;
   letter-spacing: 0.1px;
+}
+
+/* Reading-progress capsule.
+   Orange is deliberate: it is the one hue the theme's own semantic colours
+   (primary / secondary / info / success / warning / error) do not occupy, so a
+   progress ring can never be mistaken for a category or a status. It also
+   matches the "history" association the feature carries. Sits bottom-left to
+   mirror the category capsule at bottom-right, at the same size and inset. */
+.progress-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #ffffff;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 10px;
+  letter-spacing: 0.1px;
+  background: linear-gradient(135deg, #f97316, #c2410c);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* A finished book keeps the same visual language, but the darker burnt-orange
+   makes 100% scannable without adding another icon or label. */
+.progress-badge.is-complete {
+  background: linear-gradient(135deg, #c2410c, #7c2d12);
+  box-shadow: 0 1px 4px rgba(67, 20, 7, 0.58);
+}
+
+.progress-badge-anchor {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 2;
+}
+
+.progress-ring {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  transform: rotate(-90deg);
+}
+
+.progress-ring .ring-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 4;
+}
+
+.progress-ring .ring-fill {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.progress-text {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The compact card keeps the category capsule at the top, so the progress
+   capsule stays at the bottom-left and the two never collide. */
+.home-card.compact .progress-badge-anchor {
+  top: auto;
+  /* Keep the capsule above the title's bottom gradient instead of letting the
+     title overlay paint over it on short compact covers. */
+  bottom: 38px;
+  left: 6px;
+}
+
+/* In a list row there is no cover; the capsule rides inline with the metadata
+   and must not absolutely position itself. */
+.progress-badge-inline {
+  position: static;
+  flex: 0 0 auto;
 }
 
 .cover-title-overlay {

@@ -63,7 +63,8 @@ test("unloaded wheel thumbnails keep their own placeholder and optional haptics"
   assert.match(wheel, /class="wheel-thumb-placeholder"/);
   assert.doesNotMatch(wheel, /wheel-track\.is-seeking/);
   assert.match(wheel, /typeof navigator\.vibrate === "function"/);
-  assert.match(wheel, /navigator\.vibrate\(8\)/);
+  assert.match(wheel, /navigator\.vibrate\(12\)/);
+  assert.match(wheel, /function triggerWheelHaptic\(page\)/);
   assert.match(wheel, /function emitPreviewPage\(page\)/);
 });
 

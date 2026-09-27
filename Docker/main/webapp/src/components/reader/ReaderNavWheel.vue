@@ -18,6 +18,7 @@
         <button
           v-for="entry in wheelPages"
           :key="`w-${entry.page}`"
+          :data-wheel-page="entry.page"
           class="wheel-item"
           :class="{ active: Number(entry.page) === cursorPageSafe, current: Number(entry.page) === currentPage }"
           :style="wheelItemStyle(entry.page)"
@@ -82,24 +83,31 @@ const dragState = ref({
   page: 1,
   emittedPage: 1,
   captured: false,
+  tapPage: 0,
 });
 // Set the moment a gesture becomes a real drag; consumed by the click that the
 // same gesture would otherwise synthesise on release.
 let draggedThisGesture = false;
+let suppressNextClick = false;
 let lastHapticPage = -1;
 
-function emitPreviewPage(page) {
+function triggerWheelHaptic(page) {
   const next = Number(page || 1);
-  emit("preview-page", next);
   if (next === lastHapticPage) return;
   lastHapticPage = next;
   try {
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-      navigator.vibrate(8);
+      navigator.vibrate(12);
     }
   } catch {
     // Haptics are optional; unsupported browsers keep normal wheel behavior.
   }
+}
+
+function emitPreviewPage(page) {
+  const next = Number(page || 1);
+  emit("preview-page", next);
+  triggerWheelHaptic(next);
 }
 
 const cursorPageSafe = computed(() => {
@@ -256,6 +264,8 @@ function onSliderChange(v) {
 function onWheelPointerDown(event) {
   if (event?.isPrimary === false) return;
   const pointerId = Number(event?.pointerId ?? -1);
+  const item = event?.target?.closest?.("[data-wheel-page]");
+  const tapPage = Number(item?.dataset?.wheelPage || 0);
   // Deliberately NOT capturing here. A pointer captured on `pointerdown`
   // retargets the matching `pointerup` to the capture element, and the browser
   // derives the `click` target from that retargeted event -- so the `@click` on
@@ -270,6 +280,7 @@ function onWheelPointerDown(event) {
     page: Number(cursorPageSafe.value || 1),
     emittedPage: Number(cursorPageSafe.value || 1),
     captured: false,
+    tapPage: Number.isFinite(tapPage) ? tapPage : 0,
   };
 }
 
@@ -321,8 +332,17 @@ function onWheelPointerEnd(event) {
       // The element can already be gone (strip rebuilt mid-drag); ignore.
     }
   }
-  // A release that never passed the drag threshold is a tap: the `click` it
-  // produces is left alone so it reaches the thumbnail's own handler.
+  const endItem = event?.target?.closest?.("[data-wheel-page]");
+  const endPage = Number(endItem?.dataset?.wheelPage || 0);
+  if (!state.captured && state.tapPage > 0 && endPage === state.tapPage) {
+    // Mobile browsers do not consistently synthesize a click after this
+    // pointer sequence. Resolve the tap here, inside the user gesture, and
+    // suppress the compatibility click when a browser does emit one.
+    suppressNextClick = true;
+    triggerWheelHaptic(state.tapPage);
+    emit("jump-to-page", state.tapPage);
+    event?.preventDefault?.();
+  }
   dragState.value = { ...state, active: false, captured: false };
 }
 
@@ -330,13 +350,21 @@ function onWheelPointerEnd(event) {
 // drag has actually started, the click the browser synthesises on release must
 // not also jump a page -- that would make one gesture move twice.
 function onThumbClick(entry, event) {
+  if (suppressNextClick) {
+    suppressNextClick = false;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    return;
+  }
   if (draggedThisGesture) {
     draggedThisGesture = false;
     event?.preventDefault?.();
     event?.stopPropagation?.();
     return;
   }
-  emit("jump-to-page", Number(entry?.page || 1));
+  const page = Number(entry?.page || 1);
+  triggerWheelHaptic(page);
+  emit("jump-to-page", page);
 }
 
 function onWheelMouse(event) {

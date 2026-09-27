@@ -14,6 +14,7 @@ const reader = read("./src/views/ReaderPage.vue");
 const store = read("./src/stores/dashboardStore.js");
 const app = read("./src/App.vue");
 const css = read("./src/styles/app.css");
+const themeManager = read("./src/composables/useThemeManager.js");
 
 function freshStore() {
   setActivePinia(createPinia());
@@ -68,6 +69,24 @@ test("private mode changes application chrome without filtering gallery media", 
 
 test("private mode gives the app bar and sidebar an explicit private palette", () => {
   assert.match(css, /#app\.zgl-private-mode \.app-header,[\s\S]{0,120}\.app-sidebar-drawer/);
+});
+
+test("private mode forces a dark runtime theme and restores the saved mode on exit", () => {
+  assert.match(app, /useThemeManager\(config, privateMode\)/);
+  assert.match(themeManager, /privateModeRef\?\.value === true \|\| modeSetting === "dark"/);
+  assert.match(themeManager, /privateModeRef\?\.value,/,
+    "theme resolution reruns when private mode changes");
+  assert.doesNotMatch(app, /DATA_UI_THEME_MODE\s*=/,
+    "private mode must not overwrite the user's saved preference");
+});
+
+test("category capsules share the progress capsule's dimensional treatment", () => {
+  const dashboardStore = read("./src/stores/dashboardStore.js");
+  assert.match(dashboardStore, /background: `linear-gradient\(135deg,/);
+  const category = css.slice(css.indexOf(".cat-badge"), css.indexOf("/* Reading-progress capsule"));
+  assert.match(category, /box-shadow:/);
+  assert.match(category, /inset 0 1px 0/);
+  assert.match(category, /0 1px 3px/);
 });
 
 // --- progress capsule -----------------------------------------------------

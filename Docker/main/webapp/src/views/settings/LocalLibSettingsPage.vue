@@ -639,6 +639,7 @@ import { useDashboardStore } from "../../stores/dashboardStore";
 import { useLayoutStore } from "../../stores/layoutStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useToastStore } from "../../stores/useToastStore";
+import { ensureHexColor, shiftHex } from "../../utils/helpers";
 // The mode names, the offered page sizes and the normalisers come from the store
 // the dashboard reads: if the settings invented their own, a value could be
 // stored here that the feed immediately normalises into something else -- a
@@ -886,8 +887,9 @@ function namespacePillStyle(color) {
 }
 
 function categoryPillStyle(color) {
+  const c = ensureHexColor(normalizeCategoryColor(color), "#475569");
   return {
-    backgroundColor: normalizeCategoryColor(color),
+    background: `linear-gradient(135deg, ${shiftHex(c, 28)}, ${shiftHex(c, -28)})`,
     color: "#ffffff",
   };
 }
@@ -1641,6 +1643,9 @@ onUnmounted(() => {
 
 .namespace-pill {
   border: none !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 1px 3px rgba(0, 0, 0, 0.32) !important;
 }
 
 .namespace-color-input {

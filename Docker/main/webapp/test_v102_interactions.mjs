@@ -23,7 +23,7 @@ test("reader wheel captures one pointer and uses absolute drag state", () => {
   assert.match(wheel, /touch-action: none/);
 });
 
-test("a wheel tap is not captured, so a mouse click still reaches the thumbnail", () => {
+test("a wheel tap resolves on pointerup without waiting for a synthetic click", () => {
   const wheel = read("./src/components/reader/ReaderNavWheel.vue");
   const drag = read("./src/utils/readerWheelDrag.js");
 
@@ -59,9 +59,16 @@ test("a wheel tap is not captured, so a mouse click still reaches the thumbnail"
   const declared = Number(/WHEEL_DRAG_THRESHOLD_PX\s*=\s*(\d+)/.exec(drag)?.[1] || 0);
   assert.ok(declared > 0 && declared <= 12, `threshold must be a small tap tolerance, got ${declared}`);
 
-  // A tap must not also be dragged: the click handler has to exist and consume
-  // the post-drag click.
+  // Pointerup resolves touch taps immediately, while the compatibility click
+  // is retained only as a fallback and suppressed after direct resolution.
+  const end = wheel.slice(
+    wheel.indexOf("function onWheelPointerEnd"),
+    wheel.indexOf("function onThumbClick"),
+  );
+  assert.match(end, /emit\("jump-to-page", state\.tapPage\)/);
+  assert.match(end, /suppressNextClick = true/);
   assert.match(wheel, /@click="onThumbClick\(entry, \$event\)"/);
+  assert.match(wheel, /if \(suppressNextClick\)/);
   assert.match(wheel, /if \(draggedThisGesture\)/);
 });
 
@@ -100,6 +107,11 @@ test("sidebar exposes the real GitHub issues feedback link", () => {
 test("the app shell reserves horizontal touch travel for the sidebar", () => {
   const css = read("./src/styles/app.css");
   assert.match(css, /\.v-main \{[\s\S]*?touch-action: pan-y/);
+});
+
+test("dashboard quick actions stay below drawers and preview side panes", () => {
+  const css = read("./src/styles/app.css");
+  assert.match(css, /\.quick-fab-wrap \{[\s\S]*?z-index: 1000;/);
 });
 
 // --- the tablet side pane -------------------------------------------------

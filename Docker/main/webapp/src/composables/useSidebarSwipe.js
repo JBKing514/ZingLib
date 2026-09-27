@@ -1,14 +1,14 @@
 import { onBeforeUnmount, onMounted } from "vue";
 
 /**
- * One gesture for the whole shell: pull the sidebar out from the screen edge,
- * push it away to put it back.
+ * One gesture for the whole shell: push an open sidebar away to close it.
  *
  * It lives here rather than inside the dashboard because the toolbox, the XP map
  * and the settings pages are the same shell -- the reader (which hides the app
  * chrome) is the only place that opts out. The dashboard's own library/favorites/
- * history swipes are gone: that switch belongs to the rail, so a horizontal drag
- * on a feed has nothing left to mean but the sidebar.
+ * Opening by swipe is intentionally unsupported because it competes with the
+ * dashboard's long-press gallery picker. The menu button remains the sole open
+ * action; an already-open drawer can still be dismissed with a leftward swipe.
  */
 
 // Keep the opening gesture clear of Android's own edge-back zone. A third of
@@ -110,13 +110,9 @@ export function resolveSidebarSwipe(input = {}) {
   if (Math.abs(dx) < SIDEBAR_SWIPE_TRAVEL) return "";
   if (Math.abs(dx) < Math.abs(dy) * SIDEBAR_SWIPE_BIAS) return "";
 
-  if (dx > 0) {
-    // Rightward: pull it out. Already open at full width means there is nothing
-    // to pull out, and the gesture must not start on a card or mid-page.
-    if (input.drawerOpen && !input.railOn) return "";
-    if (Number(input.startX || 0) > sidebarSwipeEdge(input.viewportWidth)) return "";
-    return "open";
-  }
+  // Rightward travel never opens the drawer. This keeps dashboard card drags
+  // entirely owned by the long-press selection interaction.
+  if (dx >= 0) return "";
 
   // Leftward: push it away. With the drawer showing, this is a drag off the
   // drawer itself -- or from anywhere, when the drawer is an overlay whose scrim
@@ -131,19 +127,20 @@ function closestOf(target, selector) {
 }
 
 /**
- * Wire the gesture to the window. `drawer` and `rail` are refs onto the layout
+ * Wire the gesture to the supplied app-main surface. `drawer` and `rail` are
+ * refs onto the layout
  * store; `enabled` says whether the shell is even mounted (the reader and the
  * recovery screen render no sidebar, so the gesture has nothing to move);
  * `longPressActive` is a ref that a page raises while one of its own
  * long-press pickers owns the pointer.
  */
-export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
+export function useSidebarSwipe({ target, drawer, enabled, longPressActive }) {
   let tracking = false;
   let pointerId = -1;
   let startX = 0;
   let startY = 0;
   let startEl = null;
-  // The zoom in force when the gesture began. Read once, at pointerdown: the
+  // The zoom in force when the gesture began. Read once, at touchstart: the
   // whole drag has to be measured in one unit, and re-reading mid-gesture could
   // rescale the thresholds under the user's finger.
   let gestureZoom = 1;
@@ -156,32 +153,36 @@ export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
     return enabled ? !!enabled.value : true;
   }
 
-  function onPointerDown(event) {
+  function touchFrom(event, identifier = null) {
+    const list = event?.touches?.length ? event.touches : event?.changedTouches;
+    if (!list?.length) return null;
+    if (identifier == null) return list[0] || null;
+    return Array.from(list).find((touch) => Number(touch?.identifier ?? -1) === identifier) || null;
+  }
+
+  function onTouchStart(event) {
     tracking = false;
     if (!canTrack()) return;
-    if (longPressActive && longPressActive.value) return;
-    if (event?.isPrimary === false || !["touch", "pen"].includes(String(event?.pointerType || ""))) return;
+    if (!(drawer && drawer.value)) return;
+    if (event?.touches?.length !== 1) return;
+    const touch = touchFrom(event);
+    if (!touch) return;
     const target = event?.target || null;
     if (closestOf(target, BLOCKED_SELECTOR)) return;
     const downZoom = readPageZoom();
-    const downX = unzoomPointer(event?.clientX, downZoom);
-    // A touch that lands on a gallery card belongs to that card from the first
-    // event. The card is already arming its 430ms long-press and the drag that
-    // follows is the picker's scrub. Letting the shell keep the same pointer in
-    // the edge zone creates a race: it can open the drawer before the picker has
-    // had time to publish its active flag, especially under CSS zoom.
-    const onCard = closestOf(target, CARD_SELECTOR);
-    if (onCard) return;
-    pointerId = Number(event?.pointerId ?? -1);
+    const downX = unzoomPointer(touch.clientX, downZoom);
+    pointerId = Number(touch.identifier ?? -1);
     gestureZoom = downZoom;
     startX = downX;
-    startY = unzoomPointer(event?.clientY, downZoom);
+    startY = unzoomPointer(touch.clientY, downZoom);
     startEl = target;
     tracking = true;
   }
 
-  function onPointerMove(event) {
-    if (!tracking || Number(event?.pointerId ?? -1) !== pointerId) return;
+  function onTouchMove(event) {
+    if (!tracking) return;
+    const touch = touchFrom(event, pointerId);
+    if (!touch) return;
     if (!canTrack()) return;
 
     const root = sidebarEl();
@@ -194,8 +195,8 @@ export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
       enabled: true,
       blocked: false,
       longPressActive: !!(longPressActive && longPressActive.value),
-      dx: unzoomPointer(event?.clientX, gestureZoom) - startX,
-      dy: unzoomPointer(event?.clientY, gestureZoom) - startY,
+      dx: unzoomPointer(touch.clientX, gestureZoom) - startX,
+      dy: unzoomPointer(touch.clientY, gestureZoom) - startY,
       startX,
       viewportWidth: Number(window.innerWidth || 0),
       drawerOpen: drawer ? !!drawer.value : false,
@@ -205,36 +206,38 @@ export function useSidebarSwipe({ drawer, rail, enabled, longPressActive }) {
       onCard: closestOf(startEl, CARD_SELECTOR),
     });
 
-    if (action === "open") {
-      tracking = false;
-      if (drawer) drawer.value = true;
-      // A deliberate pull means the full sidebar, not the compact rail.
-      if (rail && rail.value) rail.value = false;
-      return;
-    }
     if (action === "close" && drawer) {
       tracking = false;
       drawer.value = false;
     }
   }
 
-  function onPointerEnd(event) {
-    if (Number(event?.pointerId ?? -1) !== pointerId) return;
+  function onTouchEnd(event) {
+    if (!tracking) return;
+    const touch = touchFrom(event, pointerId);
+    if (!touch && event?.touches?.length) return;
     tracking = false;
     pointerId = -1;
   }
 
+  function gestureSurface() {
+    const value = target?.value || null;
+    return value?.$el || value;
+  }
+
   onMounted(() => {
-    window.addEventListener("pointerdown", onPointerDown, { passive: true });
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("pointerup", onPointerEnd, { passive: true });
-    window.addEventListener("pointercancel", onPointerEnd, { passive: true });
+    const surface = gestureSurface();
+    surface?.addEventListener?.("touchstart", onTouchStart, { passive: true });
+    surface?.addEventListener?.("touchmove", onTouchMove, { passive: true });
+    surface?.addEventListener?.("touchend", onTouchEnd, { passive: true });
+    surface?.addEventListener?.("touchcancel", onTouchEnd, { passive: true });
   });
 
   onBeforeUnmount(() => {
-    window.removeEventListener("pointerdown", onPointerDown);
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", onPointerEnd);
-    window.removeEventListener("pointercancel", onPointerEnd);
+    const surface = gestureSurface();
+    surface?.removeEventListener?.("touchstart", onTouchStart);
+    surface?.removeEventListener?.("touchmove", onTouchMove);
+    surface?.removeEventListener?.("touchend", onTouchEnd);
+    surface?.removeEventListener?.("touchcancel", onTouchEnd);
   });
 }

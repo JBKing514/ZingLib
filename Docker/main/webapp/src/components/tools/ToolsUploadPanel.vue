@@ -69,7 +69,10 @@
                 </td>
                 <td>
                   <div class="text-body-2">{{ row.name }}</div>
-                  <div v-if="!row.ingestable || row.over_limit" class="text-caption text-error">
+                  <div v-if="row.errorText" class="text-caption text-error">
+                    {{ row.errorText }}
+                  </div>
+                  <div v-else-if="!row.ingestable || row.over_limit" class="text-caption text-error">
                     {{ row.over_limit ? t("tools.upload.over_limit", { max: maxPages }) : t("tools.upload.not_ingestable") }}
                   </div>
                 </td>
@@ -113,17 +116,17 @@
         <v-card-actions class="flex-wrap ga-2">
           <span v-if="statusText" class="text-caption text-medium-emphasis flex-grow-1">{{ statusText }}</span>
           <v-spacer />
-          <v-btn variant="text" color="error" :disabled="busy" @click="cancelAll">
+          <v-btn v-if="!uploadFinished" variant="text" color="error" :disabled="busy" @click="cancelAll">
             {{ t("tools.upload.cancel_review") }}
           </v-btn>
           <v-btn
             color="primary"
             variant="flat"
             :loading="busy"
-            :disabled="!selectedCount"
-            @click="startUpload"
+            :disabled="!uploadFinished && !selectedCount"
+            @click="uploadFinished ? finishReview() : startUpload()"
           >
-            {{ t("tools.upload.start") }}
+            {{ uploadFinished ? t("tools.upload.complete") : t("tools.upload.start") }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -162,6 +165,7 @@ const rows = ref([]);
 const checkedPaths = ref([]);
 const maxPages = ref(10000);
 const page = ref(1);
+const uploadFinished = ref(false);
 
 function t(key, vars = {}) {
   return layoutStore.t(key, vars);
@@ -211,6 +215,7 @@ async function stageFiles(files) {
   batchId.value = "";
   page.value = 1;
   reviewOpen.value = true;
+  uploadFinished.value = false;
   try {
     rows.value = describeLocalFiles(files);
     // Everything usable is selected by default; the user unchecks what they do
@@ -285,9 +290,9 @@ async function startUpload() {
         setRow(target.path, { state: "done", done: pages, pct: 100 });
         done += 1;
       } catch (e) {
-        setRow(target.path, { state: "error", done: 0, pct: 100 });
+        const errorText = friendlyError(e);
+        setRow(target.path, { state: "error", done: 0, pct: 100, errorText });
         failed += 1;
-        notify(friendlyError(e), "warning");
       }
     }
   } finally {
@@ -297,13 +302,21 @@ async function startUpload() {
     }
     busy.value = false;
   }
+  checkedPaths.value = [];
+  batchId.value = "";
+  uploadFinished.value = true;
+  statusText.value = t("tools.upload.import_summary", { done, failed });
+  if (done > 0) emit("uploaded");
+  notify(t("tools.upload.import_summary", { done, failed }), failed > 0 ? "warning" : "success");
+}
+
+function finishReview() {
   reviewOpen.value = false;
   rows.value = [];
   checkedPaths.value = [];
-  batchId.value = "";
   statusText.value = "";
-  emit("uploaded");
-  notify(t("tools.upload.import_summary", { done, failed }), failed > 0 ? "warning" : "success");
+  uploadFinished.value = false;
+  page.value = 1;
 }
 
 function setRow(path, patch) {
@@ -321,6 +334,7 @@ async function cancelAll() {
   checkedPaths.value = [];
   batchId.value = "";
   statusText.value = "";
+  uploadFinished.value = false;
   page.value = 1;
   if (id) {
     try {
@@ -341,6 +355,14 @@ async function cancelAll() {
  */
 function friendlyError(e) {
   const detail = e?.response?.data?.detail;
+  const detailText = String(typeof detail === "object" ? detail?.message || "" : detail || "").toLowerCase();
+  if (
+    detail?.code === "no_recognizable_images" ||
+    detailText.includes("gallery has no readable images") ||
+    detailText.includes("no recognizable images")
+  ) {
+    return t("tools.upload.error_no_images");
+  }
   if (detail) {
     return String(typeof detail === "object" ? detail.message || JSON.stringify(detail) : detail);
   }

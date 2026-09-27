@@ -38,7 +38,7 @@
       @logout="ui.logoutNow"
     />
 
-    <v-main>
+    <v-main ref="mainGestureSurface">
       <v-container fluid :class="[hideReaderChrome ? 'pa-0' : 'pa-6', ui.tab === 'chat' ? 'chat-page-container' : '']">
         <RouterView v-slot="{ Component }">
           <KeepAlive include="DashboardPage">
@@ -65,7 +65,7 @@
 </template>
 
 <script setup>
-import { computed, toRef } from "vue";
+import { computed, ref, toRef } from "vue";
 import { useRoute } from "vue-router";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useDashboardStore } from "../stores/dashboardStore";
@@ -80,6 +80,7 @@ const dashboardStore = useDashboardStore();
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
 const route = useRoute();
+const mainGestureSurface = ref(null);
 
 const hideReaderChrome = computed(() => {
   if (route.name !== "reader") return false;
@@ -95,8 +96,8 @@ const dashboardTab = computed(() => String(dashboardStore.homeTab || "local_gall
 const sidebarSwipeEnabled = computed(() => !appStore.isRecoveryMode && !hideReaderChrome.value);
 
 useSidebarSwipe({
+  target: mainGestureSurface,
   drawer: toRef(ui, "drawer"),
-  rail: toRef(ui, "rail"),
   enabled: sidebarSwipeEnabled,
   // The dashboard's long-press picker is scrubbed by a horizontal drag, i.e. the
   // same gesture that opens the sidebar. While it is up, that drag belongs to

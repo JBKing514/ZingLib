@@ -902,7 +902,14 @@ async def commit_staged_gallery(payload: dict[str, Any] | None = None) -> dict[s
         raise HTTPException(status_code=400, detail="unsupported gallery")
     source_pages = int(await run_in_threadpool(_staged_gallery_pages, source))
     if source_pages <= 0:
-        raise HTTPException(status_code=422, detail="gallery has no readable images")
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "no_recognizable_images",
+                "message": "no recognizable images",
+                "suppress_traceback": True,
+            },
+        )
     # Enforce the per-gallery page cap server-side. A gallery over the cap is
     # rejected on its own; its siblings still commit because the UI drives the
     # loop one gallery at a time.

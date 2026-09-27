@@ -5,6 +5,7 @@ import { useSettingsStore } from "./settingsStore";
 import { useLayoutStore } from "./layoutStore";
 import { usePreviewProgressStore } from "./previewProgressStore";
 import { getCategoryLabel } from "../utils/categoryPresets";
+import { ensureHexColor, shiftHex } from "../utils/helpers";
 
 // The dashboard tabs that exist in a local-only build.
 //
@@ -550,8 +551,10 @@ export const useDashboardStore = defineStore("dashboard", () => {
 
   function categoryBadgeStyle(item) {
     const raw = String(item?.category || "").trim().toLowerCase();
-    const c = categoryMap.value[raw]?.color || "#475569";
-    return { backgroundColor: c };
+    const c = ensureHexColor(categoryMap.value[raw]?.color, "#475569");
+    return {
+      background: `linear-gradient(135deg, ${shiftHex(c, 28)}, ${shiftHex(c, -28)})`,
+    };
   }
 
   /**

@@ -17,11 +17,9 @@ This module replaces that with a two-phase flow:
 
 Detection rules (mirroring what ``scan_local_lib`` will later ingest):
 
-* **folder gallery** -- a directory with *no sub-directories*, whose files are
-  *all* images, plus an optional ``ComicInfo.xml``. A directory holding a mix of
-  images and other files, or one that itself contains sub-directories, is not a
-  leaf gallery: its children are examined instead, so a parent folder holding
-  many independent galleries yields many entries rather than one.
+* **folder gallery** -- a directory with *no sub-directories* and at least one
+  supported image. Unsupported sidecars are ignored instead of rejecting an
+  otherwise valid gallery.
 * **archive gallery** -- a ``.zip`` / ``.cbz`` (and ``.cbr``, counted for the
   listing although the ingest pipeline treats it as an opaque blob), provided
   the archive actually contains image members.
@@ -170,16 +168,16 @@ def _archive_has_comicinfo(path: Path) -> bool:
 def _archive_entry(f: Path) -> dict[str, Any] | None:
     """Build a gallery entry for an archive file, or None to skip it.
 
-    Skipped only when we could read the container and it held neither images nor
-    ComicInfo -- an unreadable container is always surfaced, flagged
+    Skipped when we could read the container and it held no images -- an
+    unreadable container is always surfaced, flagged
     ``ingestable: false``, so the user can see it and act on it.
     """
     suffix = f.suffix.lower()
     members, readable = _archive_image_members(f)
     has_ci = _archive_has_comicinfo(f)
-    if readable and not members and not has_ci:
-        # A readable archive with no images and no ComicInfo is somebody's
-        # document bundle that the folder dialog happened to sweep up.
+    if readable and not members:
+        # ComicInfo alone does not make a comic. A readable archive must contain
+        # at least one supported image before it enters the commit flow.
         return None
     ingestable = suffix in INGESTABLE_ARCHIVE_EXTS and bool(members)
     return _gallery_entry(
@@ -197,9 +195,7 @@ def _leaf_folder_verdict(entry: Path) -> tuple[bool, int, bool]:
     """Classify a directory as a leaf gallery.
 
     Returns ``(is_gallery, image_count, has_comicinfo)``. A directory qualifies
-    only when it holds no sub-directories and every one of its files is either an
-    image or a ``ComicInfo.xml`` -- exactly the shape ``scan_local_lib`` turns
-    into one work.
+    only when it holds no sub-directories and at least one supported image.
     """
     try:
         children = list(entry.iterdir())
@@ -223,12 +219,9 @@ def _leaf_folder_verdict(entry: Path) -> tuple[bool, int, bool]:
         if _is_allowed_image(child):
             images += 1
             continue
-        # A stray non-image file (a .txt readme, a .DS_Store, an .nfo) means
-        # this is not a clean image folder. Treat it as "not a gallery" so the
-        # caller keeps descending and the user sees the real galleries inside.
-        if name.startswith("."):
-            continue
-        return False, 0, False
+        # Positive selection: unsupported files are neither pages nor reasons
+        # to reject a directory that otherwise contains readable pages.
+        continue
 
     if images <= 0:
         return False, 0, False

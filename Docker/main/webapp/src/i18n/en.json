@@ -146,6 +146,8 @@
   "tools.upload.cancel": "Cancel this upload",
   "tools.upload.cancel_review": "Cancel upload",
   "tools.upload.start": "Start upload",
+  "tools.upload.complete": "Done",
+  "tools.upload.error_no_images": "Upload failed: no recognizable images",
   "tools.upload.importing": "Uploading: {name}",
   "tools.upload.import_summary": "Upload finished: {done} succeeded, {failed} failed",
   "tools.upload.page_of": "Page {page}/{pages}",

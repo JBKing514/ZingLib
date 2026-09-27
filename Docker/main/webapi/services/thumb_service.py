@@ -60,20 +60,25 @@ def work_thumb_cache_file(arcid: str, preset: str) -> Path:
     if not safe:
         safe = "work"
     safe_preset = normalize_thumb_preset(preset)
-    return THUMB_GALLARY_DIR / f"{safe}_cover_{safe_preset}.webp"
+    return THUMB_GALLARY_DIR / f"{safe}_cover_{safe_preset}_box.webp"
+
+
+def thumbnail_resample_filter() -> int:
+    """Cheap, high-quality area downsampling for scrolling cover grids."""
+    resampling = getattr(Image, "Resampling", Image)
+    return resampling.BOX
 
 
 def build_thumb_cache(src: Path | bytes, cache_file: Path, preset: str) -> bytes:
     """Render ``src`` to a cached WebP cover and return the encoded bytes."""
     THUMB_GALLARY_DIR.mkdir(parents=True, exist_ok=True)
-    resampling = getattr(Image, "Resampling", Image)
     safe_preset = normalize_thumb_preset(preset)
     target_size = thumb_size_for_preset(safe_preset)
     quality = thumb_quality_for_preset(safe_preset)
     fp = io.BytesIO(src) if isinstance(src, bytes) else src
     with Image.open(fp) as img:
         frame = img.convert("RGB")
-        frame.thumbnail(target_size, resample=resampling.LANCZOS)
+        frame.thumbnail(target_size, resample=thumbnail_resample_filter())
         bio = io.BytesIO()
         frame.save(bio, format="WEBP", quality=quality, method=6)
         data = bio.getvalue()

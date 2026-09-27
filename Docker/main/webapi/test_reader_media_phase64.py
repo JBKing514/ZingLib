@@ -18,6 +18,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
+    from webapi.services.thumb_service import thumbnail_resample_filter
     from webapi.routers.media import _normalize_thumb_preset, _work_thumb_cache_file
     from webapi.routers.reader import (
         _normalize_reader_quality_mode,
@@ -27,6 +28,7 @@ try:
     )
 except ImportError:
     sys.path.insert(0, "/app")
+    from webapi.services.thumb_service import thumbnail_resample_filter
     from webapi.routers.media import _normalize_thumb_preset, _work_thumb_cache_file
     from webapi.routers.reader import (
         _normalize_reader_quality_mode,
@@ -64,7 +66,8 @@ def main() -> int:
     assert_true(_normalize_thumb_preset("low") == "300", "low thumbnail preset should map to 300")
     assert_true(_normalize_thumb_preset("ultra") == "1200", "ultra thumbnail preset should map to 1200")
     cache_path = _work_thumb_cache_file("phase64-demo", "high")
-    assert_true(cache_path.name.endswith("_cover_900.webp"), "thumbnail cache file should encode the preset")
+    assert_true(cache_path.name.endswith("_cover_900_box.webp"), "thumbnail cache file should encode preset and renderer")
+    assert_true(thumbnail_resample_filter() == Image.Resampling.BOX, "cover grids should use the cheaper BOX filter")
 
     print("[2] Reader compression modes return bounded webp output")
     raw_bytes = build_fixture_bytes()

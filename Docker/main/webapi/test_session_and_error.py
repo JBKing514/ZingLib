@@ -2,6 +2,8 @@ import os
 import sys
 import uuid
 import time
+import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Any
 import psycopg
@@ -21,7 +23,8 @@ else:
 # Adjust path to import webapi modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from webapi.main import app
+from fastapi import HTTPException
+from webapi.main import app, _http_exception_with_traceback
 from webapi.services.local_lib_service import _safe_join_local_dir
 from webapi.services.db_service import db_dsn
 from webapi.services.auth_service import _invalidate_bootstrap_cache, create_session, get_session_user
@@ -104,6 +107,23 @@ def _drop_test_user(uid: str) -> None:
         print(f"[cleanup] removed test user {uid}")
     except Exception as exc:  # noqa: BLE001
         print(f"[cleanup] could not remove test user {uid}: {exc}")
+
+
+def test_expected_validation_error_suppresses_traceback():
+    print("--- Test 1b: Expected Validation Error Suppression ---")
+    detail = {
+        "code": "no_recognizable_images",
+        "message": "no recognizable images",
+        "suppress_traceback": True,
+    }
+    try:
+        raise HTTPException(status_code=422, detail=detail)
+    except HTTPException as exc:
+        response = asyncio.run(_http_exception_with_traceback(None, exc))
+    payload = json.loads(bytes(response.body))
+    assert response.status_code == 422
+    assert payload.get("detail", {}).get("code") == "no_recognizable_images"
+    assert "traceback" not in payload
 
 
 def test_sliding_session_renewal():
@@ -318,6 +338,7 @@ def test_mutating_routes_require_admin_role():
 
 if __name__ == "__main__":
     test_path_length_error_suppression()
+    test_expected_validation_error_suppresses_traceback()
     test_sliding_session_renewal()
     test_migration_timeout()
     test_mutating_routes_require_admin_role()

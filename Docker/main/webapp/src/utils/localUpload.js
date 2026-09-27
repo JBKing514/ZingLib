@@ -12,9 +12,8 @@ const MAX_GALLERY_PAGES = 10000;
  * This runs *before* any network request, which is the whole point: the user
  * sees what will be imported without first transferring gigabytes. It mirrors
  * the backend contract in services/local_upload_service.py -- a leaf folder is
- * a gallery when it holds at least one image, has no subfolder, and contains
- * only images / ComicInfo.xml / dotfiles. Anything else is skipped rather than
- * silently swallowing a real gallery.
+ * a gallery when it holds at least one image and has no subfolder. Unsupported
+ * sidecars are left out of the upload instead of rejecting the gallery.
  *
  * Rows carry the library path they will land on, so `files` must be the exact
  * set that will be uploaded for that row.
@@ -63,18 +62,11 @@ export function describeLocalFiles(files) {
       });
     }
 
-    // A folder is a gallery when it looks like one. Archives are handled as
-    // their own rows above, so they do not disqualify the folder. Files that
-    // are neither images, archives nor ComicInfo.xml make the folder ambiguous
-    // -- skip it, but never let that drop a folder that plainly holds images.
-    const unknown = entries.filter(
-      (e) =>
-        !imagePattern.test(e.name) &&
-        !archivePattern.test(e.name) &&
-        !comicInfoPattern.test(e.name) &&
-        !e.name.startsWith(".")
-    );
-    if (!images.length || hasSubfolder || unknown.length) continue;
+    // Positive selection: upload only formats the server actually consumes.
+    // `metadata`, README, NFO and other sidecars neither reject the gallery nor
+    // consume transfer/storage.
+    if (!images.length || hasSubfolder) continue;
+    const acceptedFiles = [...images, ...comicInfo];
 
     rows.push({
       path: folder,
@@ -82,7 +74,7 @@ export function describeLocalFiles(files) {
       kind: "folder",
       page_count: images.length,
       ingestable: true,
-      files: entries,
+      files: acceptedFiles,
     });
   }
 

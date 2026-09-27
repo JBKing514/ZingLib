@@ -144,6 +144,8 @@
   "tools.upload.cancel": "取消本次上传",
   "tools.upload.cancel_review": "取消上传",
   "tools.upload.start": "开始上传",
+  "tools.upload.complete": "完成",
+  "tools.upload.error_no_images": "上传失败：无可识别图片",
   "tools.upload.importing": "正在上传：{name}",
   "tools.upload.import_summary": "上传完成：成功 {done}，失败 {failed}",
   "tools.upload.page_of": "第 {page}/{pages} 页",

@@ -40,24 +40,22 @@ const pull = (extra = {}) => ({
   ...extra,
 });
 
-test("a pull from the first third of the viewport opens the drawer", () => {
-  assert.equal(resolveSidebarSwipe(pull({ startX: 120 })), "open");
-  // Exactly on the edge of the zone still counts; a pixel past it does not.
-  assert.equal(resolveSidebarSwipe(pull({ startX: 121 })), "");
+test("a rightward pull never opens the drawer", () => {
+  assert.equal(resolveSidebarSwipe(pull({ startX: 120 })), "");
+  assert.equal(resolveSidebarSwipe(pull({ startX: 4 })), "");
   assert.equal(sidebarSwipeEdge(360), 120);
   assert.equal(sidebarSwipeEdge(900), 300);
   assert.equal(SIDEBAR_SWIPE_EDGE_RATIO, 1 / 3);
   assert.ok(SIDEBAR_SWIPE_TRAVEL >= 40, `the travel threshold still rejects jitter (${SIDEBAR_SWIPE_TRAVEL}px)`);
 });
 
-test("a pull out of the rail asks for the full sidebar, not nothing", () => {
-  assert.equal(resolveSidebarSwipe(pull({ drawerOpen: true, railOn: true })), "open");
-  // Already open at full width: there is nothing to pull out.
+test("a rightward pull cannot expand either rail or drawer", () => {
+  assert.equal(resolveSidebarSwipe(pull({ drawerOpen: true, railOn: true })), "");
   assert.equal(resolveSidebarSwipe(pull({ drawerOpen: true, railOn: false })), "");
 });
 
-test("the edge gesture also works where a dashboard card reaches the edge", () => {
-  assert.equal(resolveSidebarSwipe(pull({ onCard: true })), "open");
+test("dashboard cards cannot trigger drawer opening", () => {
+  assert.equal(resolveSidebarSwipe(pull({ onCard: true })), "");
   assert.equal(resolveSidebarSwipe(pull({ onCard: true, startX: 121 })), "");
 });
 
@@ -81,7 +79,7 @@ test("a scroll, a tap and a disabled shell are all left alone", () => {
   // Literals again: 40px is a jitter, 56px is a drag, and neither number may
   // follow the constant it is meant to pin.
   assert.equal(resolveSidebarSwipe(pull({ dx: 40 })), "", "too short");
-  assert.equal(resolveSidebarSwipe(pull({ dx: 56 })), "open", "just long enough");
+  assert.equal(resolveSidebarSwipe(pull({ dx: 56 })), "", "opening swipe removed");
   assert.equal(resolveSidebarSwipe(pull({ dx: -90, drawerOpen: true, dy: 200 })), "", "vertical push");
   assert.equal(resolveSidebarSwipe(pull({ enabled: false })), "", "reader / recovery mode");
   assert.equal(resolveSidebarSwipe(pull({ blocked: true })), "", "inside an overlay");
@@ -91,6 +89,7 @@ test("a scroll, a tap and a disabled shell are all left alone", () => {
 test("the shell owns the gesture, and the dashboard owns none of it", () => {
   const layout = read("./src/layouts/MainLayout.vue");
   assert.match(layout, /useSidebarSwipe\(\{/);
+  assert.match(layout, /target: mainGestureSurface/);
   assert.match(layout, /drawer: toRef\(ui, "drawer"\)/);
   assert.match(layout, /const sidebarSwipeEnabled = computed\(\(\) => !appStore\.isRecoveryMode && !hideReaderChrome\.value\)/);
 
@@ -100,8 +99,10 @@ test("the shell owns the gesture, and the dashboard owns none of it", () => {
   assert.doesNotMatch(dash, /useSidebarSwipe/, "one owner: the shell");
 
   const swipe = read("./src/composables/useSidebarSwipe.js");
-  assert.match(swipe, /window\.addEventListener\("pointermove", onPointerMove/);
-  assert.match(swipe, /if \(action === "open"\) \{[\s\S]*?tracking = false;[\s\S]*?drawer\.value = true;/);
+  assert.match(swipe, /surface\?\.addEventListener\?\.\("touchmove", onTouchMove/);
+  assert.doesNotMatch(swipe, /window\.addEventListener\("pointer/);
+  assert.doesNotMatch(swipe, /action === "open"/);
+  assert.match(swipe, /if \(!\(drawer && drawer\.value\)\) return;/);
 });
 
 test("the shell yields while a page-owned long-press picker holds the pointer", () => {
@@ -110,14 +111,14 @@ test("the shell yields while a page-owned long-press picker holds the pointer", 
   // page *after* it opens -- so the shell has to be told, not guess.
   assert.equal(resolveSidebarSwipe(pull({ longPressActive: true })), "", "pull suppressed");
   assert.equal(resolveSidebarSwipe(pull({ longPressActive: true, drawerOpen: true, dx: -90 })), "", "push suppressed");
-  assert.equal(resolveSidebarSwipe(pull({ longPressActive: false })), "open", "and released again");
+  assert.equal(resolveSidebarSwipe(pull({ longPressActive: false })), "", "opening remains disabled");
   assert.equal(resolveSidebarSwipe(pull({ longPressActive: true, startX: 900 })), "", "no edge, still suppressed");
 
   const swipe = read("./src/composables/useSidebarSwipe.js");
   assert.match(swipe, /if \(input\.longPressActive\) return "";/);
-  assert.match(swipe, /export function useSidebarSwipe\(\{ drawer, rail, enabled, longPressActive \}\)/);
+  assert.match(swipe, /export function useSidebarSwipe\(\{ target, drawer, enabled, longPressActive \}\)/);
   assert.match(swipe, /longPressActive: !!\(longPressActive && longPressActive\.value\)/);
-  assert.match(swipe, /if \(longPressActive && longPressActive\.value\) return;/);
+  assert.match(swipe, /longPressActive: !!\(longPressActive && longPressActive\.value\)/);
 
   // One flag, raised where the picker is opened and cleared where it closes.
   const store = read("./src/stores/dashboardStore.js");
@@ -221,9 +222,9 @@ test("the edge zone and the pointer are measured in the same units under zoom", 
     startX: unzoomPointer(startCss * zoom, zoom),
     dx: unzoomPointer(90 * zoom, zoom),
   }));
-  assert.equal(atZoom(1, 100), "open");
-  assert.equal(atZoom(0.8, 100), "open", "80% zoom must not move the edge zone");
-  assert.equal(atZoom(1.6, 100), "open", "nor 160%");
+  assert.equal(atZoom(1, 100), "");
+  assert.equal(atZoom(0.8, 100), "", "opening stays disabled at 80% zoom");
+  assert.equal(atZoom(1.6, 100), "", "opening stays disabled at 160% zoom");
   assert.equal(atZoom(0.8, 200), "", "and a start well past the zone still does not open");
 });
 
@@ -241,7 +242,7 @@ test("the composable reads the live zoom, not a value captured once", () => {
   // swipes, and a module-level constant would keep using the old one.
   assert.match(src, /const downZoom = readPageZoom\(\);/, "sampled when the gesture starts");
   assert.match(src, /gestureZoom = downZoom;/, "and carried for the whole drag");
-  assert.match(src, /unzoomPointer\(event\?\.clientX, gestureZoom\) - startX/, "and applied to the travel");
+  assert.match(src, /unzoomPointer\(touch\.clientX, gestureZoom\) - startX/, "and applied to the travel");
 });
 
 // --- the long-press picker and the drawer must not fight -------------------
@@ -254,14 +255,12 @@ test("the composable reads the live zoom, not a value captured once", () => {
 // and answered with `touchcancel`, which the card read as "released" -- closing
 // the picker the instant it appeared (90%).
 
-test("a press that starts on a gallery card is never the drawer's", () => {
-  // The veto lives in `onPointerDown`, which decides whether to track at all --
-  // a pure resolver cannot see it, so the wiring is pinned by source instead.
+test("a card swipe is observed locally but yields while long press owns it", () => {
   const src = read("./src/composables/useSidebarSwipe.js");
-  assert.match(src, /const onCard = closestOf\(target, CARD_SELECTOR\);/,
-    "the card test is evaluated at pointerdown");
-  assert.match(src, /if \(onCard\) return;/,
-    "the shell must not track a card press, even inside its edge zone");
+  assert.doesNotMatch(src, /if \(onCard\) return;/,
+    "the local surface may observe a card swipe after its long-press arm cancels");
+  assert.match(src, /longPressActive: !!\(longPressActive && longPressActive\.value\)/,
+    "an armed or open long-press still owns the gesture");
 });
 
 test("the long-press arming window owns the gesture and browser cancellation cannot flash it closed", () => {

@@ -43,6 +43,7 @@ const router = useRouter();
 const route = useRoute();
 const layoutStore = useLayoutStore();
 const dashboardStore = useDashboardStore();
+const { privateMode } = storeToRefs(dashboardStore);
 
 const controlStore = useControlStore();
 const auditStore = useAuditStore();
@@ -360,7 +361,7 @@ appStore.init({
   },
 });
 
-const { initTheme, stopTheme } = useThemeManager(config);
+const { initTheme, stopTheme } = useThemeManager(config, privateMode);
 
 async function initializeAppData() {
   if (appInitialized) return;

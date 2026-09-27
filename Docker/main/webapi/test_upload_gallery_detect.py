@@ -106,14 +106,15 @@ def test_folder_with_subdirs_is_not_a_gallery() -> None:
     assert res["gallery_count"] == 1, res
 
 
-def test_folder_with_non_image_payload_is_not_a_gallery() -> None:
+def test_folder_with_non_image_payload_keeps_supported_pages() -> None:
     batch_id, root = _fresh_batch()
     g = root / "Mixed"
     _img(g / "a.jpg")
     (g / "notes.txt").write_text("hi", encoding="utf-8")
 
     res = up.inspect_staged_galleries(batch_id)
-    assert res["gallery_count"] == 0, res
+    assert res["gallery_count"] == 1, res
+    assert res["galleries"][0]["page_count"] == 1, res
 
 
 def test_dotfiles_do_not_disqualify_a_gallery() -> None:
@@ -125,6 +126,18 @@ def test_dotfiles_do_not_disqualify_a_gallery() -> None:
 
     res = up.inspect_staged_galleries(batch_id)
     assert res["gallery_count"] == 1, res
+    assert res["galleries"][0]["page_count"] == 1, res
+
+
+def test_extensionless_metadata_sidecar_does_not_disqualify_gallery() -> None:
+    batch_id, root = _fresh_batch()
+    gallery = root / "WithMetadata"
+    _img(gallery / "001.jpg")
+    (gallery / "metadata").write_bytes(b"")
+
+    res = up.inspect_staged_galleries(batch_id)
+    assert res["gallery_count"] == 1, res
+    assert res["galleries"][0]["path"] == "WithMetadata", res
     assert res["galleries"][0]["page_count"] == 1, res
 
 
@@ -174,6 +187,14 @@ def test_unreadable_zip_is_listed_but_not_ingestable() -> None:
 def test_zip_without_images_is_not_a_gallery() -> None:
     batch_id, root = _fresh_batch()
     _zip_with(root / "docs.zip", ["readme.txt", "changelog.md"])
+
+    res = up.inspect_staged_galleries(batch_id)
+    assert res["gallery_count"] == 0, res
+
+
+def test_zip_with_only_comicinfo_is_not_a_gallery() -> None:
+    batch_id, root = _fresh_batch()
+    _zip_with(root / "metadata-only.cbz", ["ComicInfo.xml", "notes.txt"])
 
     res = up.inspect_staged_galleries(batch_id)
     assert res["gallery_count"] == 0, res
@@ -317,12 +338,14 @@ if __name__ == "__main__":
         test_leaf_folder_is_one_gallery,
         test_parent_folder_yields_many_galleries_not_one,
         test_folder_with_subdirs_is_not_a_gallery,
-        test_folder_with_non_image_payload_is_not_a_gallery,
+        test_folder_with_non_image_payload_keeps_supported_pages,
         test_dotfiles_do_not_disqualify_a_gallery,
+        test_extensionless_metadata_sidecar_does_not_disqualify_gallery,
         test_zip_and_cbz_report_member_counts,
         test_cbr_is_listed_but_not_ingestable,
         test_unreadable_zip_is_listed_but_not_ingestable,
         test_zip_without_images_is_not_a_gallery,
+        test_zip_with_only_comicinfo_is_not_a_gallery,
         test_nested_archives_are_found_inside_a_mother_folder,
         test_symlinks_are_not_followed,
         test_results_are_stably_ordered_for_pagination,

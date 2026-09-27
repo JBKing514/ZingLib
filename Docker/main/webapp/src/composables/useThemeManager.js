@@ -2,7 +2,7 @@ import { watch } from "vue";
 import { useTheme } from "vuetify";
 import { asBool, ensureHexColor, shiftHex } from "../utils/helpers";
 
-export function useThemeManager(configRef) {
+export function useThemeManager(configRef, privateModeRef = null) {
   const theme = useTheme();
 
   let stopThemeWatch = null;
@@ -13,7 +13,9 @@ export function useThemeManager(configRef) {
     const config = configRef?.value || {};
     const modeSetting = String(config.DATA_UI_THEME_MODE || "system");
     const systemDark = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)").matches : false;
-    const dark = modeSetting === "dark" || (modeSetting === "system" && systemDark);
+    // This changes only the resolved runtime theme, never the saved setting.
+    // Disabling private mode therefore restores light/dark/system immediately.
+    const dark = privateModeRef?.value === true || modeSetting === "dark" || (modeSetting === "system" && systemDark);
     const preset = String(config.DATA_UI_THEME_PRESET || "modern");
     const themes = theme.themes.value;
     const useCustom = preset === "custom";
@@ -81,6 +83,7 @@ export function useThemeManager(configRef) {
           configRef?.value?.DATA_UI_THEME_CUSTOM_PRIMARY,
           configRef?.value?.DATA_UI_THEME_CUSTOM_SECONDARY,
           configRef?.value?.DATA_UI_THEME_CUSTOM_ACCENT,
+          privateModeRef?.value,
         ],
         () => applyTheme(),
         { deep: true, immediate: true },

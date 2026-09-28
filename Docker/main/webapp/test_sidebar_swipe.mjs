@@ -295,16 +295,15 @@ test("a long-press in progress owns the pointer, whether or not the picker is up
     "and cleared when the press ends");
 });
 
-test("the pressed card declares that the browser does not own the touch", () => {
+test("the pressed card preserves native vertical scrolling until the picker opens", () => {
   const dash = read("./src/views/DashboardScopePage.vue");
-  // `.card-pressing` has to be bound in the template...
+  // `.card-pressing` remains useful for suppressing selection and callouts.
   assert.match(dash, /'card-pressing': cardPressingKey === previewItemKey\(item\)/,
     "the class is bound to the pressed card");
-  // ...and it has to actually take the gesture away from the browser. `pan-y`
-  // (inherited from .v-main) reserves the horizontal axis, which is the axis the
-  // picker scrubs on; `none` during the press is what stops the selection.
-  assert.match(dash, /\.home-card\.card-pressing \{\s*touch-action: none;\s*\}/,
-    "the pressing card opts out of browser panning entirely");
+  assert.match(dash, /\.home-card \{\s*touch-action: pan-y;/,
+    "cards allow native vertical panning from touchstart");
+  assert.doesNotMatch(dash, /\.home-card\.card-pressing\s*\{[^}]*touch-action:\s*none;/,
+    "waiting for a long press must not revoke native scrolling mid-gesture");
   assert.match(dash, /\.home-card\.card-pressing,[\s\S]{0,120}user-select: none !important;/,
     "and nothing inside it may be selected");
   // The callout is what a sustained press over text raises on mobile.

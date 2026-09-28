@@ -10,6 +10,10 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.1.3] - 2026-09-28
+
+- _No notes recorded._
+
 ## [1.1.2] - 2026-09-27
 
 - _No notes recorded._

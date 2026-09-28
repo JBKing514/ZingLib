@@ -834,10 +834,9 @@ export default {
       _longPressOpenedAt: 0,
       _longPressAnchorY: 0,
       // The `previewItemKey` of the card the finger is currently resting on.
-      // Drives the `.card-pressing` class, which is what tells the browser to
-      // stop treating the touch as a text selection / image drag while the
-      // 430ms long-press timer runs. Without it the browser wins the gesture and
-      // answers with `touchcancel`, closing the picker the moment it opens.
+      // Drives the `.card-pressing` class while the long-press timer runs. The
+      // class suppresses selection/callouts without changing touch-action, so a
+      // normal vertical scroll remains native from the first movement.
       cardPressingKey: "",
       // The offsets themselves live in feedScrollMemory (module scope, so they
       // outlive a remount); these two only guard the restore in flight.
@@ -2448,17 +2447,16 @@ export default {
   user-select: none;
 }
 
-/* While the finger is down waiting for the 430ms timer -- or while the picker
-   is up -- nothing in the card may be selected or dragged, and the horizontal
-   axis must belong to us. */
+/* While the finger is down waiting for the 430ms timer, nothing in the card may
+   be selected or dragged. Do not change touch-action here: browsers decide who
+   owns a gesture at touchstart, so switching pan-y to none creates a dead zone
+   before a normal vertical scroll can begin. The open picker has its own host
+   below and takes full control only after the long press is confirmed. */
 .home-card.card-pressing,
 .home-card.card-pressing * {
   user-select: none !important;
   -webkit-user-select: none !important;
   -webkit-touch-callout: none !important;
-}
-.home-card.card-pressing {
-  touch-action: none;
 }
 
 .longpress-picker-backdrop {

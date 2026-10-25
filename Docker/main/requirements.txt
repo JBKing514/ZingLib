@@ -35,4 +35,4 @@ scipy==1.17.1
 numpy==2.4.6
 cryptography==50.0.2
 python-multipart==0.0.32
-Pillow==12.3.0
+Pillow==13.0.0

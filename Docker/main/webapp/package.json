@@ -1,7 +1,7 @@
 {
   "name": "zinglib-webui",
   "private": true,
-  "version": "1.1.4",
+  "version": "1.1.5",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
     "axios": "^1.9.0",
     "pinia": "^2.3.1",
     "plotly.js-dist-min": "^2.35.3",
-    "vue": "^3.5.13",
+    "vue": "^3.5.44",
     "vue-router": "^4.5.1",
     "vuetify": "^3.7.12"
   },

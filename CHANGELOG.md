@@ -10,6 +10,11 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.1.5] - 2026-10-25
+
+- Dependency refresh: psycopg-pool 3.3.3, uvicorn 0.54.0 and cryptography 50.0.2 (patch/minor only), plus the vue runtime at 3.5.44. No behaviour change is intended; the guard suite, the container test suite and the HTTP regression were re-run against the rebuilt image.
+- Corrected the publishing guide: the verification command read `/app/webapp/static/version.json`, a path that does not exist in the image (the built SPA lands in `/app/webapi/static/`), and it claimed CI produced no SBOM while the publish job has been attaching SBOM and provenance attestations all along.
+
 ## [1.1.4] - 2026-10-24
 
 - ComicInfo.xml and the rebuilt .cbz are now replaced atomically: the new bytes are written to a sibling temp file, flushed, and renamed over the original. A full disk, a lost permission or a killed process therefore leaves the previous file intact instead of a truncated one, and no .tmp is left beside the gallery.

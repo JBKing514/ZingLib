@@ -65,17 +65,27 @@ names a version rather than `latest`.
 **2. Confirm the image agrees with the repository.**
 
 ```sh
-docker run --rm jbking114514/zinglib:1.1.4 cat /app/webapp/static/version.json
+docker run --rm jbking114514/zinglib:1.1.4 cat /app/webapi/static/version.json
 ```
 
 `version`, `build` and `published_at` must match `CHANGELOG.md`'s newest section;
 `scripts/check_version_consistency.py` enforces the same rule locally, so a
 mismatch means the published image was built from a different tree.
 
-**3. Generate an SBOM (not produced by CI yet).**
+**3. Read the SBOM that CI already attached.**
+
+The publishing job runs `docker/build-push-action` with `sbom: true` and
+`provenance: mode=max`, so every pushed image carries both attestations:
 
 ```sh
-# Debian packages + Python wheels + npm tree inside the image
+docker buildx imagetools inspect jbking114514/zinglib:1.1.4 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect jbking114514/zinglib:1.1.4 --format '{{ json .Provenance }}'
+```
+
+For an SPDX file you can keep next to a release, run `syft` yourself — the
+attestation is the authoritative one, this is a convenience copy:
+
+```sh
 syft jbking114514/zinglib:1.1.4 -o spdx-json > zinglib-1.1.4.spdx.json
 # Just the Python surface, if that is all you need
 docker run --rm --entrypoint pip jbking114514/zinglib:1.1.4 freeze
@@ -85,6 +95,6 @@ docker run --rm --entrypoint pip jbking114514/zinglib:1.1.4 freeze
 digest, and the webapp installs with `npm ci`, so the SBOM should show no
 floating versions — anything with a range is a bug worth filing.
 
-**What is not covered yet:** image signing (`cosign`) and an automated SBOM
-attached to the release. Until then, treat the digest as the verification
-mechanism: it is the part that actually proves what you are running.
+**What is not covered yet:** image signing (`cosign`). Until that lands, the
+digest is the verification mechanism — it is the part that actually proves what
+you are running.

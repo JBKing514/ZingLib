@@ -34,7 +34,7 @@ docker compose -f Docker/quick_deploy_docker-compose.yml up -d
 | `zinglib-db` | PostgreSQL 17 + `pgvector` | 5432 |
 | `zinglib` | ZingLib 本体（公开镜像） | 8501 |
 
-* 应用默认用公开镜像 `jbking114514/zinglib:latest`；要用自己构建的，加 `ZINGLIB_IMAGE=zinglib:local`。
+* 应用默认用**固定版本**的公开镜像 `jbking114514/zinglib:1.1.4`；`:latest` 跟随最新发布，但只有固定 tag 能复现，**生产部署建议写死版本号**。要用自己构建的，加 `ZINGLIB_IMAGE=zinglib:local`。
 * 数据库默认 **`zinglib_library`**，用户 `postgres`，密码 `postgres`；可用 `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` 覆盖（同一组值会同时传给数据库与应用两个容器）。
 * 数据目录默认落在 **compose 文件同级的 `Docker/zinglib/`**（compose 里的相对路径是相对 **compose 文件**解析的，不是相对当前目录）：
   数据库在 `Docker/zinglib/pgvector/`，应用 runtime 在 `Docker/zinglib/runtime/`。
@@ -79,7 +79,7 @@ docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
 docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 \
   -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:latest data-ui
+  jbking114514/zinglib:1.1.4 data-ui
 ```
 
 * Setup Wizard 里数据库主机填 **`zinglib-db`**（同一自建网络内按容器名解析）。

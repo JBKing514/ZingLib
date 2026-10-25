@@ -68,7 +68,7 @@ docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
   pgvector/pgvector:pg17
 docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:latest data-ui
+  jbking114514/zinglib:1.1.4 data-ui
 ```
 
 两个容器必须在同一个自建网络里，否则应用解析不到数据库。数据库在**另一台机器**时去掉 `--network`，

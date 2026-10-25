@@ -467,7 +467,11 @@ export async function downloadLocalMetadataRestoreLog(logId) {
 }
 
 export async function deleteLocalGallery(payload = {}) {
-  const { data } = await api.post("/local-lib/delete", payload || {});
+  // The server refuses a delete without `confirm: true`, and this route can unlink
+  // the gallery's files from disk. The flag is injected here rather than at each
+  // call site so a future caller cannot forget it -- the UI always asks the user
+  // first, which is what makes sending it correct in the first place.
+  const { data } = await api.post("/local-lib/delete", { confirm: true, ...(payload || {}) });
   return data;
 }
 

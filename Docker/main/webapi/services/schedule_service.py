@@ -11,6 +11,7 @@ from typing import Any
 from apscheduler.triggers.cron import CronTrigger
 
 from ..core.constants import DEFAULT_SCHEDULE, RUN_HISTORY_FILE, SCHEDULE_FILE, TASK_COMMANDS, TASK_LOG_DIR
+from ..core.redact import redact_text
 from ..core.runtime_state import scheduler
 from .config_service import apply_runtime_timezone, build_runtime_env, ensure_dirs, now_iso, _runtime_tzinfo
 
@@ -40,6 +41,47 @@ def load_run_history(limit: int = 200) -> list[dict[str, Any]]:
             except Exception:
                 continue
     return rows[-limit:]
+
+
+def log_operation(
+    *,
+    task: str,
+    status: str,
+    summary: str,
+    detail: dict[str, Any] | None = None,
+    log_file: str = "",
+) -> None:
+    """Record one batch operation in the shared run history, and never raise.
+
+    The report asked for "one operation log for metadata batch updates, ComicInfo
+    write-back and sidecar writes, each recording succeeded / skipped / failed /
+    reason / retryable". ZingLib already has that file and already shows it in
+    the UI (`/api/audit/history`), but only scans and scheduled tasks wrote to it;
+    the three operations that touch the user's files did not, so a half-finished
+    write-back left no trace once the HTTP response was gone.
+
+    Logging is diagnostics: an unwritable history file must never turn a
+    successful operation into a failed one, so every failure here is swallowed.
+    """
+    try:
+        append_run_history(
+            {
+                "task_id": f"{task}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+                "ts": now_iso(),
+                "task": str(task or "operation"),
+                "status": str(status or ""),
+                # Keep the shape the history table already renders: `rc` is what
+                # turns a row red, so only a real failure sets it.
+                "rc": 0 if str(status) in {"success", "dry_run"} else 1,
+                "elapsed_s": 0,
+                "log_file": str(log_file or ""),
+                "stdout_tail": json.dumps(detail or {}, ensure_ascii=False)[:2000],
+                "stderr_tail": "",
+                "task_summary": str(summary or "")[:1000],
+            }
+        )
+    except Exception:
+        pass
 
 
 def _date_to_epoch(date_txt: str, end_of_day: bool = False) -> int | None:
@@ -181,7 +223,10 @@ def run_task(task_name: str, cmd: list[str], timeout_s: int = 1800) -> dict[str,
         return ""
 
     def _sanitize_task_log_text(task: str, text: str) -> str:
-        raw = str(text or "")
+        # A task log records a child process's own output, which can echo the
+        # environment it ran with (a DSN, an API key). Redaction happens here,
+        # for every task, not only for the one that happens to be noisy today.
+        raw = redact_text(text)
         if task != "local_ingest":
             return raw
         out_lines: list[str] = []

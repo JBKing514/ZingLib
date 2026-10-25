@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from webapi.routers import reader, local_lib, media
 from webapi.services import local_lib_service as lib, auth_service
+from webapi.services import db_snapshot as snapshot_mod
 
 
 class ReaderArchiveRegression(unittest.TestCase):
@@ -56,7 +57,8 @@ class ReaderArchiveRegression(unittest.TestCase):
         app.include_router(local_lib.router)
         sentinel = Path(_temp.name) / 'keep.txt'
         sentinel.write_text('keep')
-        with TestClient(app) as client, patch.object(auth_service, 'authenticate_user', return_value=dict(identity)) as verify, patch.object(auth_service, 'auth_pepper', return_value=''), patch('webapi.services.db_service.db_dsn', return_value=''), patch.object(local_lib, 'query_rows', return_value=[{'removed': 3}]) as query:
+        with TestClient(app) as client, patch.object(auth_service, 'authenticate_user', return_value=dict(identity)) as verify, patch.object(auth_service, 'auth_pepper', return_value=''), patch('webapi.services.db_service.db_dsn', return_value=''), patch.object(local_lib, 'query_rows', return_value=[{'removed': 3}]) as query, \
+             patch.object(snapshot_mod, 'query_rows', return_value=[{'arcid': 'a1', 'title': 'T', 'tags': ['x'], 'raw': {}, 'local_dir': ''}]) as snapshot_query:
             url = '/api/local-lib/rebuild-database'
             self.assertEqual(client.post(url, json={'password':'test'}).status_code, 400)
             identity['role'] = 'user'
@@ -65,10 +67,18 @@ class ReaderArchiveRegression(unittest.TestCase):
             verify.return_value = None
             self.assertEqual(client.post(url, json={'confirm':True,'password':'bad'}).status_code, 403)
             query.assert_not_called()
+            # The snapshot is taken after the password check, so a rejected run
+            # must not touch the database through that door either.
+            snapshot_query.assert_not_called()
             verify.return_value = dict(identity)
             result = client.post(url, json={'confirm':True,'password':'test'})
             self.assertEqual(result.status_code, 200, result.text)
             self.assertEqual(result.json()['removed'], 3)
+            # A rebuild now exports what it is about to delete; the response names
+            # the file and the file has to exist.
+            snapshot_name = str(result.json().get('snapshot') or '')
+            self.assertTrue(snapshot_name.startswith('works_rebuild_'), snapshot_name)
+            self.assertTrue((snapshot_mod.SNAPSHOT_DIR / snapshot_name).is_file(), snapshot_name)
             self.assertEqual(sentinel.read_text(), 'keep')
             self.assertIn('DELETE FROM works', query.call_args.args[0])
 

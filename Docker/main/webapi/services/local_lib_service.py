@@ -15,6 +15,7 @@ from typing import Any
 
 from ..core.config_values import as_bool
 from ..core.constants import LOCAL_LIB_DIR, TRANSLATION_DIR
+from .atomic_io import atomic_write_bytes
 from .config_service import ensure_dirs, resolve_config
 from .db_service import query_rows
 
@@ -1097,6 +1098,7 @@ def write_comicinfo(local_dir: str, title: str, tags: list[str]) -> bool:
         return bio.getvalue()
 
     if base.is_file() and base.suffix.lower() in {".zip", ".cbz"}:
+        temp_path: Path | None = None
         try:
             temp_fd, temp_path_str = tempfile.mkstemp(dir=base.parent, suffix=".tmp")
             os.close(temp_fd)
@@ -1121,11 +1123,23 @@ def write_comicinfo(local_dir: str, title: str, tags: list[str]) -> bool:
                     zout.writestr(item, zin.read(item.filename))
                 zout.writestr(xml_name_in_zip, new_xml_bytes)
 
+            # The rebuilt archive replaces the only copy of the gallery. Flush it
+            # to disk before the rename, and drop it if anything failed before
+            # that: a leftover `.tmp` next to a gallery is worse than nothing.
+            with temp_path.open("rb+") as handle:
+                os.fsync(handle.fileno())
             temp_path.replace(base)
+            temp_path = None
             return True
         except Exception as e:
             print(f"Error writing to zip ComicInfo.xml: {e}")
             return False
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
 
     elif base.is_dir():
         try:
@@ -1140,7 +1154,11 @@ def write_comicinfo(local_dir: str, title: str, tags: list[str]) -> bool:
                 xml_bytes = target.read_bytes()
 
             new_xml_bytes = update_xml_content(xml_bytes)
-            target.write_bytes(new_xml_bytes)
+            # In-place `write_bytes` truncated the only copy of the user's
+            # ComicInfo before writing a single new byte: a full disk or a killed
+            # process left an unreadable file where metadata used to be. Replace
+            # it atomically instead -- a failed write now leaves the old file.
+            atomic_write_bytes(target, new_xml_bytes)
             return True
         except Exception as e:
             print(f"Error writing to directory ComicInfo.xml: {e}")

@@ -54,6 +54,11 @@ CONFIG_SPECS: dict[str, dict[str, Any]] = {
     "DATA_UI_THEME_OLED": {"type": "bool", "default": False},
     "AUTH_SESSION_TTL_HOURS": {"type": "int", "default": 72, "min": 1, "max": 720},
     "AUTH_COOKIE_SECURE": {"type": "bool", "default": False},
+    # Debug switch. Off by default: an error response carries a short request id
+    # and the server log carries the traceback. Turning it on puts the traceback
+    # (and the raw exception text) back into the HTTP response, which is what you
+    # want while debugging locally and never want on a shared host.
+    "DATA_UI_EXPOSE_TRACEBACK": {"type": "bool", "default": False},
     "DATA_UI_THEME_CUSTOM_PRIMARY": {"type": "text", "default": "#6750A4"},
     "DATA_UI_THEME_CUSTOM_SECONDARY": {"type": "text", "default": "#625B71"},
     "DATA_UI_THEME_CUSTOM_ACCENT": {"type": "text", "default": "#7D5260"},

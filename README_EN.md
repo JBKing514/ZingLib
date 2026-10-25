@@ -69,7 +69,7 @@ docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
   pgvector/pgvector:pg17
 docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:latest data-ui
+  jbking114514/zinglib:1.1.4 data-ui
 ```
 
 Both containers must share the network you create, or the application cannot resolve the database. If the database is

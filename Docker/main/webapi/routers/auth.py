@@ -117,7 +117,7 @@ def auth_register_admin(req: AuthRegisterRequest, request: Request, response: Re
             ip=str(request.client.host if request.client else ""),
             user_agent=str(request.headers.get("user-agent") or ""),
         )
-        _auth_set_cookie(response, token, cfg, csrf_token=str(sess.get("csrf_token") or ""))
+        _auth_set_cookie(response, token, cfg, csrf_token=str(sess.get("csrf_token") or ""), request=request)
         return {"ok": True, "user": user, "session": sess}
     except PermissionError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -156,7 +156,7 @@ def auth_login(req: AuthLoginRequest, request: Request, response: Response) -> d
             ip=ip,
             user_agent=str(request.headers.get("user-agent") or ""),
         )
-        _auth_set_cookie(response, token, cfg, csrf_token=str(sess.get("csrf_token") or ""))
+        _auth_set_cookie(response, token, cfg, csrf_token=str(sess.get("csrf_token") or ""), request=request)
         return {"ok": True, "user": user, "session": sess}
     except HTTPException:
         raise
@@ -176,7 +176,7 @@ def auth_login(req: AuthLoginRequest, request: Request, response: Response) -> d
                     csrf = issue_recovery_csrf(token, pepper=auth_pepper())
                 except ValueError as ve:
                     raise HTTPException(status_code=503, detail=str(ve))
-                _auth_set_cookie(response, token, cfg, csrf_token=csrf)
+                _auth_set_cookie(response, token, cfg, csrf_token=csrf, request=request)
                 return {
                     "ok": True,
                     "user": {
@@ -249,7 +249,7 @@ def auth_csrf(request: Request, response: Response) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="invalid session")
     cfg, _ = resolve_config()
     csrf_token = issue_csrf_token(dsn, token)
-    _auth_set_cookie(response, token, cfg, csrf_token=csrf_token)
+    _auth_set_cookie(response, token, cfg, csrf_token=csrf_token, request=request)
     return {"ok": True, "csrf_token": csrf_token}
 
 

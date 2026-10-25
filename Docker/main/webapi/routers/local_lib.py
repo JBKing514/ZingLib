@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import FileResponse
 
 from ..core.constants import LOCAL_LIB_DIR, MAX_RESTORE_LOGS, RESTORE_LOG_DIR, TASK_LOG_DIR, THUMB_GALLARY_DIR
+from ..core.redact import redact_text
 from ..services.config_service import ensure_dirs, now_iso
 from ..services.config_service import resolve_config
 from ..services.local_lib_service import (
@@ -77,13 +78,48 @@ async def rebuild_gallery_database(request: Request, payload: dict[str, Any]) ->
         raise HTTPException(status_code=409, detail="local library operation is running")
     _reject_if_tag_reapply_running("database rebuild")
     async with _scan_lock, _fs_ops_lock:
+        # Snapshot first, and abort if it cannot be written. The DELETE below is
+        # the only operation in the app that removes every row of `works`: the
+        # files survive, but a hand-edited title, a bookmark or a tag that only
+        # ever lived in the database does not. Failing closed here is cheap; the
+        # alternative is a rebuild that quietly costs the user their metadata.
+        from ..services.db_snapshot import snapshot_for_rebuild
+
+        try:
+            snap = await run_in_threadpool(snapshot_for_rebuild, "rebuild")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500,
+                detail=f"snapshot failed, rebuild aborted: {exc}",
+            )
         rows = await run_in_threadpool(query_rows,
             "WITH removed AS (DELETE FROM works RETURNING arcid) SELECT count(*) AS removed FROM removed")
         async with _reader_manifest_lock, _reader_session_lock:
             invalidate_reader_caches("")
     with _local_cache_lock:
         _local_cache.clear()
-    return {"ok": True, "removed": int(rows[0]["removed"]), "files_untouched": True}
+    removed = int(rows[0]["removed"])
+    from ..services.schedule_service import log_operation
+
+    log_operation(
+        task="db_rebuild",
+        status="success",
+        summary=(
+            f"removed={removed}; snapshot_works={snap['works']}; "
+            f"snapshot_read_events={snap['read_events']}; snapshot={snap['file']}"
+        ),
+        detail={"snapshot": snap["file"], "truncated": snap["truncated"], "bytes": snap["bytes"]},
+    )
+    return {
+        "ok": True,
+        "removed": removed,
+        "files_untouched": True,
+        # The caller gets the snapshot's name so the UI can offer it as a
+        # download; without that the file is only findable by browsing the host.
+        "snapshot": snap["file"],
+        "snapshot_works": snap["works"],
+        "snapshot_read_events": snap["read_events"],
+    }
 
 _scan_lock = asyncio.Lock()
 _fs_ops_lock = asyncio.Lock()
@@ -676,7 +712,7 @@ async def trigger_local_lib_scan(payload: dict[str, Any] | None = None) -> dict[
                 f"path_hint={path_hint}\n"
                 f"result={result}\n"
             )
-            log_path.write_text(content, encoding="utf-8")
+            log_path.write_text(redact_text(content), encoding="utf-8")
             append_run_history(
                 {
                     "task_id": f"local-lib-scan-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
@@ -700,7 +736,7 @@ async def trigger_local_lib_scan(payload: dict[str, Any] | None = None) -> dict[
                 f"error={e}\n\n"
                 f"traceback:\n{tb}\n"
             )
-            log_path.write_text(content, encoding="utf-8")
+            log_path.write_text(redact_text(content), encoding="utf-8")
             append_run_history(
                 {
                     "task_id": f"local-lib-scan-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
@@ -711,7 +747,7 @@ async def trigger_local_lib_scan(payload: dict[str, Any] | None = None) -> dict[
                     "elapsed_s": 0,
                     "log_file": str(log_path),
                     "stdout_tail": "",
-                    "stderr_tail": str(e),
+                    "stderr_tail": redact_text(str(e)),
                     "task_summary": f"reason={reason}; error={e}",
                 }
             )
@@ -1167,6 +1203,28 @@ def restore_local_metadata(payload: dict[str, Any] | None = None) -> dict[str, A
             _local_cache["key"] = ""
         except Exception:
             pass
+    # A restore writes vectors, history and hand-picked metadata back into the
+    # database; when it half-succeeds the per-gallery detail lives in the restore
+    # log, but "did last night's restore finish, and how much was unreadable"
+    # belongs in the shared operation history next to every other batch job.
+    from ..services.schedule_service import log_operation
+
+    log_operation(
+        task="metadata_restore",
+        status=(
+            "dry_run"
+            if dry_run
+            else ("success" if not int(report.get("unreadable_count") or 0) else "partial")
+        ),
+        summary=(
+            f"sidecars={report.get('sidecars')}; matched={report.get('matched')}; "
+            f"restored={report.get('restored')}; orphan={report.get('orphan_count')}; "
+            f"unreadable={report.get('unreadable_count')}; "
+            f"no_sidecar={report.get('no_sidecar_count')}"
+        ),
+        detail={"log_id": log_id, "restart_scheduled": bool(restart_scheduled)},
+        log_file=str(log_path) if log_path else "",
+    )
     return report
 
 
@@ -1322,6 +1380,27 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
         if len(details) < detail_cap:
             details.append(row_note)
 
+    # One line in the shared operation history. Until this existed, a write-back
+    # that failed halfway was only visible for as long as the HTTP response was
+    # on screen; "database updated, file write failed" is exactly the partial
+    # success the report wanted recorded. Dry runs are logged too, marked as
+    # such, so the history shows what was previewed before what was written.
+    from ..services.schedule_service import log_operation
+
+    log_operation(
+        task="metadata_writeback",
+        status=("dry_run" if dry_run else ("success" if not failed else "partial")),
+        summary=(
+            f"total={total}; comicinfo={comicinfo_written}; sidecar={sidecar_written}; "
+            f"skipped={skipped}; failed={failed}"
+        ),
+        detail={
+            "arcids_requested": len(wanted),
+            "want_comicinfo": want_comicinfo,
+            "want_sidecar": want_sidecar,
+            "failed_arcids": [d.get("arcid") for d in details if d.get("ok") is False][:50],
+        },
+    )
     return {
         "ok": True,
         "dry_run": dry_run,
@@ -1335,6 +1414,29 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
         "wrote_comicinfo": want_comicinfo,
         "wrote_sidecar": want_sidecar,
     }
+
+
+@router.get("/api/local-lib/db-snapshot/{name}")
+def download_db_snapshot(name: str) -> FileResponse:
+    """Hand back the snapshot a rebuild wrote, so it is not just a file on disk.
+
+    The name is matched against a strict pattern instead of being joined onto the
+    directory: the parameter is attacker-controlled and the directory is inside
+    the user's runtime.
+    """
+    from ..services.db_snapshot import SNAPSHOT_DIR
+
+    safe = str(name or "").strip()
+    if not re.fullmatch(r"works_[A-Za-z0-9_-]+\.jsonl", safe):
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    path = SNAPSHOT_DIR / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    return FileResponse(
+        path=str(path),
+        filename=safe,
+        media_type="application/x-ndjson",
+    )
 
 
 @router.get("/api/local-lib/metadata/restore-log/{log_id}")
@@ -1577,7 +1679,9 @@ def local_lib_meta_batch_update(payload: dict[str, Any] | None = None) -> dict[s
     clear_category = bool(req.get("clear_category") or False)
 
     rows = query_rows(
-        "SELECT arcid, tags, raw, local_dir, title FROM works WHERE arcid = ANY(%s::text[])",
+        "SELECT arcid, tags, raw, local_dir, title, "
+        "(visual_embedding IS NOT NULL) AS has_cover "
+        "FROM works WHERE arcid = ANY(%s::text[])",
         (arcids,),
     )
     row_map = {str(r.get("arcid") or "").strip(): r for r in rows}
@@ -1585,6 +1689,10 @@ def local_lib_meta_batch_update(payload: dict[str, Any] | None = None) -> dict[s
     done = 0
     skipped = 0
     failed = 0
+    # Counter for "row updated, disk copy not": kept apart from `failed` so the
+    # existing meaning of `failed` (nothing was applied) does not shift under
+    # callers and tests that already read it.
+    write_failed = 0
     out_rows: list[dict[str, Any]] = []
     # Guarded here (not at the top, which is shared with the read-only preview
     # endpoint) because this is the first writer in the function.
@@ -1620,18 +1728,46 @@ def local_lib_meta_batch_update(payload: dict[str, Any] | None = None) -> dict[s
 
             # Synchronously write back to ComicInfo.xml
             local_dir = str(row.get("local_dir") or "").strip()
+            comicinfo_ok: bool | None = None
+            comicinfo_reason = ""
             if local_dir:
-                from ..services.local_lib_service import write_comicinfo
+                from ..services.local_lib_service import comicinfo_target_exists, write_comicinfo
                 next_user_title = plan.get("next_user_title") or ""
                 official_title = str(row.get("title") or "").strip()
                 display_title = next_user_title or official_title
-                write_comicinfo(local_dir, display_title, list(plan.get("next_tags") or []))
+                if not comicinfo_target_exists(local_dir):
+                    # The gallery folder vanished or was renamed outside the app.
+                    # Not a write error, but the row and the disk have diverged,
+                    # and the caller has to know which one it is.
+                    comicinfo_ok = False
+                    comicinfo_reason = "path not found"
+                else:
+                    comicinfo_ok = bool(write_comicinfo(local_dir, display_title, list(plan.get("next_tags") or [])))
+                    if not comicinfo_ok:
+                        comicinfo_reason = "write failed"
 
             # Keep the gallery's sidecar in step with the edit. Its vectors are
             # unchanged, but the metadata block it carries is not -- and a stale
             # title in the backup would be restored over a newer one.
             from ..services.gallery_metadata_backup import write_sidecar
-            write_sidecar(arcid)
+            sidecar_ok = bool(write_sidecar(arcid))
+            # `write_sidecar` also answers False when there is nothing worth
+            # backing up yet (no visual embedding). That is a skip, not a
+            # failure -- counting it would paint most of a fresh library as
+            # "partial" and bury the real write errors.
+            has_cover = bool(row.get("has_cover"))
+            sidecar_reason = "" if sidecar_ok else ("no visual embedding" if not has_cover else "write failed")
+            sidecar_failed = has_cover and not sidecar_ok
+
+            # The database row is already written at this point, so a failed file
+            # write is NOT a failed edit -- it is a *partial* success, and the
+            # difference matters: the next scan reads ComicInfo back and would
+            # silently revert the edit. Returning true while the file still holds
+            # the old title is precisely the "DB updated, file write failed" case
+            # the report asked to make visible.
+            file_write_failed = comicinfo_ok is False or sidecar_failed
+            if file_write_failed:
+                write_failed += 1
 
             # Invalidate local recommendation cache to ensure title updates are reflected immediately
             try:
@@ -1650,18 +1786,58 @@ def local_lib_meta_batch_update(payload: dict[str, Any] | None = None) -> dict[s
                     "removed_user_tags": plan.get("removed_tags") or [],
                     "user_title": plan.get("next_user_title") or "",
                     "category": plan.get("next_category") or "",
+                    # `ok` stays true -- the row was updated. These say whether
+                    # the disk copy followed, and if not, why.
+                    "comicinfo_written": comicinfo_ok,
+                    "comicinfo_reason": comicinfo_reason,
+                    "sidecar_written": sidecar_ok,
+                    "sidecar_reason": sidecar_reason,
+                    "file_write_failed": file_write_failed,
                 }
             )
         except Exception as e:
             failed += 1
             out_rows.append({"arcid": arcid, "ok": False, "reason": str(e)})
 
-    return {"ok": True, "done": int(done), "skipped": int(skipped), "failed": int(failed), "rows": out_rows}
+    from ..services.schedule_service import log_operation
+
+    log_operation(
+        task="metadata_batch_update",
+        status=("success" if not (failed or write_failed) else "partial"),
+        summary=(
+            f"requested={len(arcids)}; done={done}; skipped={skipped}; "
+            f"failed={failed}; file_write_failed={write_failed}"
+        ),
+        detail={
+            "add_tags": len(add_tags),
+            "remove_tags": len(remove_tags),
+            "file_write_failed_arcids": [
+                r.get("arcid") for r in out_rows if r.get("file_write_failed")
+            ][:50],
+        },
+    )
+    return {
+        "ok": True,
+        "done": int(done),
+        "skipped": int(skipped),
+        "failed": int(failed),
+        # Rows whose database write succeeded but whose file write did not. They
+        # are not in `failed` on purpose: the edit is live, the disk copy is not.
+        "file_write_failed": int(write_failed),
+        "rows": out_rows,
+    }
 
 
 @router.post("/api/local-lib/delete")
 def delete_local_gallery(payload: dict[str, Any] | None = None) -> dict[str, Any]:
     req = dict(payload or {})
+    # This route can remove the gallery's files from disk, so it follows the same
+    # rule as the database rebuild: an explicit `confirm: true` in the body, not
+    # merely a dialog in the UI. The check sits first on purpose -- a request that
+    # forgot the flag must not reach the row lookup, let alone the delete.
+    # `is not True` rather than truthiness: `"true"` and `1` are not consent.
+    if req.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail="confirmation required")
     arcid = str(req.get("arcid") or "").strip()
     if not arcid:
         raise HTTPException(status_code=400, detail="arcid required")

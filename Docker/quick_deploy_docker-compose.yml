@@ -9,7 +9,7 @@ services:
     # Pinned by digest on purpose: `pg17` is a moving tag, so a rebuild of the
     # upstream image can change the database under an existing data directory
     # without anything in this repository changing. The digest below is the one
-    # ZingLib 1.1.4 was tested against; bump it deliberately, together with a
+    # ZingLib 1.1.5 was tested against; bump it deliberately, together with a
     # migration test, rather than inheriting whatever upstream published today.
     image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
     container_name: zinglib-db
@@ -50,7 +50,7 @@ services:
     # silently jumps to whatever was published last is impossible to reproduce.
     # `latest` still tracks the newest release for anyone who prefers it, and
     # this default moves with each `bump_version.py` run.
-    image: ${ZINGLIB_IMAGE:-jbking114514/zinglib:1.1.4}
+    image: ${ZINGLIB_IMAGE:-jbking114514/zinglib:1.1.5}
     container_name: zinglib
     command: ["data-ui"]
 

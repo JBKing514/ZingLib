@@ -35,7 +35,7 @@ It starts two containers:
 | `zinglib-db` | PostgreSQL 17 + `pgvector` | 5432 |
 | `zinglib` | ZingLib itself (published image) | 8501 |
 
-* The application uses the **pinned** public image `jbking114514/zinglib:1.1.4` by default; `:latest` follows the newest release, but only a pinned tag is reproducible, so **pin it in production**. Add `ZINGLIB_IMAGE=zinglib:local` for your own build.
+* The application uses the **pinned** public image `jbking114514/zinglib:1.1.5` by default; `:latest` follows the newest release, but only a pinned tag is reproducible, so **pin it in production**. Add `ZINGLIB_IMAGE=zinglib:local` for your own build.
 * The database defaults to **`zinglib_library`**, user `postgres`, password `postgres`; override with `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` (the same group is passed to both the database and the application container).
 * Data lands in **`Docker/zinglib/`, beside the compose file** (relative paths inside a compose file resolve against that
   file, not against your current directory): the database in `Docker/zinglib/pgvector/`, the application runtime in
@@ -89,7 +89,7 @@ docker run -d --name zinglib-db --network zinglib-net --restart unless-stopped \
 docker run -d --name zinglib --network zinglib-net --restart unless-stopped \
   -p 8501:8501 \
   -v /path/to/runtime:/app/runtime \
-  jbking114514/zinglib:1.1.4 data-ui
+  jbking114514/zinglib:1.1.5 data-ui
 ```
 
 * In the Setup Wizard the database host is **`zinglib-db`** (resolved by container name inside the network you created).

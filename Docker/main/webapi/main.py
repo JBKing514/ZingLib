@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .core.constants import APP_CONFIG_FILE, STATIC_DIR
 from .core.middleware import auth_guard
+from .core.redact import redact_text, redact_value
 from .routers import auth, local_lib, media, reader, search, settings, system, tasks, xp
 from .services.config_service import apply_runtime_timezone, ensure_dirs
 
@@ -94,7 +95,11 @@ async def _attach_request_id(request: Request, call_next):
 async def _http_exception_with_traceback(request: Request, exc: HTTPException) -> JSONResponse:
     tb = traceback.format_exc()
     rid = _request_id(request)
-    detail = exc.detail
+    # A route that raises `HTTPException(detail=str(exc))` is quoting a driver
+    # error, and a driver error can quote the DSN it failed to reach. Mask at the
+    # boundary so both the body and the log line are safe, without auditing every
+    # route's exception handling.
+    detail = redact_value(exc.detail)
     status = int(exc.status_code)
     payload: dict[str, object] = {"detail": detail}
 
@@ -103,18 +108,21 @@ async def _http_exception_with_traceback(request: Request, exc: HTTPException) -
         suppress_traceback = True
     if _expose_error_details() and not suppress_traceback:
         if isinstance(detail, dict) and detail.get("traceback"):
-            payload["traceback"] = str(detail.get("traceback") or "")
+            payload["traceback"] = redact_text(detail.get("traceback") or "")
         elif _has_real_traceback(tb):
-            payload["traceback"] = tb
+            payload["traceback"] = redact_text(tb)
     payload["request_id"] = rid
 
     # 4xx are the client's fault and happen on purpose (validation, 403, 404):
     # one line each, no stack. 5xx are ours, so the stack goes to the log.
     path = str(getattr(request, "url", "") or "")
     if status >= 500:
-        logger.error("status=%s request_id=%s path=%s detail=%s\n%s", status, rid, path, detail, tb)
+        logger.error(
+            "status=%s request_id=%s path=%s detail=%s\n%s",
+            status, rid, path, redact_text(detail), redact_text(tb),
+        )
     else:
-        logger.warning("status=%s request_id=%s path=%s detail=%s", status, rid, path, detail)
+        logger.warning("status=%s request_id=%s path=%s detail=%s", status, rid, path, redact_text(detail))
     return JSONResponse(status_code=status, content=payload, headers={REQUEST_ID_HEADER: rid})
 
 
@@ -123,14 +131,17 @@ async def _unhandled_exception_with_traceback(request: Request, exc: Exception) 
     tb = traceback.format_exc()
     rid = _request_id(request)
     path = str(getattr(request, "url", "") or "")
-    logger.error("unhandled request_id=%s path=%s exc=%s\n%s", rid, path, exc, tb)
+    logger.error(
+        "unhandled request_id=%s path=%s exc=%s\n%s",
+        rid, path, redact_text(exc), redact_text(tb),
+    )
 
     too_long = (isinstance(exc, OSError) and getattr(exc, "errno", None) == 36) or \
                (isinstance(exc, (OSError, ValueError)) and "too long" in str(exc).lower())
     if too_long:
         return JSONResponse(
             status_code=400,
-            content={"detail": str(exc), "request_id": rid},
+            content={"detail": redact_text(exc), "request_id": rid},
             headers={REQUEST_ID_HEADER: rid},
         )
     content: dict[str, object] = {
@@ -140,8 +151,8 @@ async def _unhandled_exception_with_traceback(request: Request, exc: Exception) 
         "request_id": rid,
     }
     if _expose_error_details():
-        content["detail"] = f"internal error: {exc}"
-        content["traceback"] = tb
+        content["detail"] = f"internal error: {redact_text(exc)}"
+        content["traceback"] = redact_text(tb)
     return JSONResponse(status_code=500, content=content, headers={REQUEST_ID_HEADER: rid})
 
 app.add_middleware(

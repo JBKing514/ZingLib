@@ -446,7 +446,11 @@ def apply_pending(
 
 
 def _sanitize(dsn: str) -> str:
-    return re.sub(r":([^:@/]+)@", r":***@", str(dsn or ""))
+    # One redactor for the whole app: the local regex here only knew the DSN
+    # shape, so a  echoed by a failing driver sailed past.
+    from webapi.core.redact import redact_text
+
+    return redact_text(dsn)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -44,3 +44,47 @@ images also include OCI provenance and an SBOM attestation.
 
 The publishing job requires the release tag to match the application version
 exactly, so a mistyped tag is not published.
+
+## Verifying a published image
+
+A tag is a mutable pointer and this repository is not signed yet, so "we pushed
+1.1.4" and "the image you pulled is 1.1.4" are two different claims. Check the
+second one before trusting a deployment.
+
+**1. Confirm the digest, and pin it.**
+
+```sh
+docker buildx imagetools inspect jbking114514/zinglib:1.1.4   # both architectures, with digests
+docker pull jbking114514/zinglib@sha256:<digest>              # the immutable reference
+```
+
+A manifest digest is content-addressed: if it matches, the bytes match. Pin that
+in `ZINGLIB_IMAGE` when reproducibility matters — the compose default already
+names a version rather than `latest`.
+
+**2. Confirm the image agrees with the repository.**
+
+```sh
+docker run --rm jbking114514/zinglib:1.1.4 cat /app/webapp/static/version.json
+```
+
+`version`, `build` and `published_at` must match `CHANGELOG.md`'s newest section;
+`scripts/check_version_consistency.py` enforces the same rule locally, so a
+mismatch means the published image was built from a different tree.
+
+**3. Generate an SBOM (not produced by CI yet).**
+
+```sh
+# Debian packages + Python wheels + npm tree inside the image
+syft jbking114514/zinglib:1.1.4 -o spdx-json > zinglib-1.1.4.spdx.json
+# Just the Python surface, if that is all you need
+docker run --rm --entrypoint pip jbking114514/zinglib:1.1.4 freeze
+```
+
+`requirements.txt` is fully pinned with `==`, the base image is pinned by
+digest, and the webapp installs with `npm ci`, so the SBOM should show no
+floating versions — anything with a range is a bug worth filing.
+
+**What is not covered yet:** image signing (`cosign`) and an automated SBOM
+attached to the release. Until then, treat the digest as the verification
+mechanism: it is the part that actually proves what you are running.

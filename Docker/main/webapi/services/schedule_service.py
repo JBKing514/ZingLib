@@ -11,6 +11,7 @@ from typing import Any
 from apscheduler.triggers.cron import CronTrigger
 
 from ..core.constants import DEFAULT_SCHEDULE, RUN_HISTORY_FILE, SCHEDULE_FILE, TASK_COMMANDS, TASK_LOG_DIR
+from ..core.redact import redact_text
 from ..core.runtime_state import scheduler
 from .config_service import apply_runtime_timezone, build_runtime_env, ensure_dirs, now_iso, _runtime_tzinfo
 
@@ -222,7 +223,10 @@ def run_task(task_name: str, cmd: list[str], timeout_s: int = 1800) -> dict[str,
         return ""
 
     def _sanitize_task_log_text(task: str, text: str) -> str:
-        raw = str(text or "")
+        # A task log records a child process's own output, which can echo the
+        # environment it ran with (a DSN, an API key). Redaction happens here,
+        # for every task, not only for the one that happens to be noisy today.
+        raw = redact_text(text)
         if task != "local_ingest":
             return raw
         out_lines: list[str] = []

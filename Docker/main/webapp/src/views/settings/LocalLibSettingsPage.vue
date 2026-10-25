@@ -20,7 +20,19 @@
            it belongs with the other housekeeping that acts on the live database
            rather than in the danger zone, which is now only the connection. -->
       <v-btn color="error" variant="tonal" prepend-icon="mdi-database-refresh-outline" :disabled="isRecoveryMode" @click="openRebuildDialog">{{ t("settings.rebuild.title") }}</v-btn>
+      <!-- Shown only after a rebuild in this session: the snapshot it wrote is the
+           only copy of the titles, tags and read history that the rebuild deleted. -->
+      <v-btn
+        v-if="snapshotUrl"
+        color="primary"
+        variant="text"
+        prepend-icon="mdi-download-outline"
+        :href="snapshotUrl"
+        target="_blank"
+        rel="noopener"
+      >{{ t("settings.rebuild.download_snapshot") }}</v-btn>
     </div>
+    <div v-if="snapshotUrl" class="text-caption text-medium-emphasis mt-1">{{ t("settings.rebuild.snapshot_hint") }}</div>
     <v-row class="mt-2">
       <v-col cols="12" md="6">
         <div class="d-flex align-center ga-2 flex-wrap">
@@ -1162,6 +1174,15 @@ async function confirmClearReadEventsNow() {
 const rebuildDialog = ref(false);
 const rebuildPassword = ref("");
 const rebuilding = ref(false);
+// The snapshot the last rebuild wrote. Its name comes back from the API, and the
+// download link is the only way to reach the file without shelling into the
+// host, so it stays on screen for the rest of the session.
+const lastRebuildSnapshot = ref("");
+const snapshotUrl = computed(() =>
+  lastRebuildSnapshot.value
+    ? `/api/local-lib/db-snapshot/${encodeURIComponent(lastRebuildSnapshot.value)}`
+    : "",
+);
 const isRecoveryMode = computed(() => appStore.isRecoveryMode);
 
 function openRebuildDialog() {
@@ -1189,6 +1210,7 @@ async function confirmRebuild() {
     dashboard.mobilePreviewItem = null;
     dashboard.localFolderNodes = [];
     rebuildDialog.value = false;
+    lastRebuildSnapshot.value = String(result.snapshot || "");
     toast.success(t("settings.rebuild.done", { count: result.removed }));
   } catch (e) {
     toast.warning(String(e?.response?.data?.detail || e));

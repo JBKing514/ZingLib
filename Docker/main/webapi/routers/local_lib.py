@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import FileResponse
 
 from ..core.constants import LOCAL_LIB_DIR, MAX_RESTORE_LOGS, RESTORE_LOG_DIR, TASK_LOG_DIR, THUMB_GALLARY_DIR
+from ..core.redact import redact_text
 from ..services.config_service import ensure_dirs, now_iso
 from ..services.config_service import resolve_config
 from ..services.local_lib_service import (
@@ -77,13 +78,48 @@ async def rebuild_gallery_database(request: Request, payload: dict[str, Any]) ->
         raise HTTPException(status_code=409, detail="local library operation is running")
     _reject_if_tag_reapply_running("database rebuild")
     async with _scan_lock, _fs_ops_lock:
+        # Snapshot first, and abort if it cannot be written. The DELETE below is
+        # the only operation in the app that removes every row of `works`: the
+        # files survive, but a hand-edited title, a bookmark or a tag that only
+        # ever lived in the database does not. Failing closed here is cheap; the
+        # alternative is a rebuild that quietly costs the user their metadata.
+        from ..services.db_snapshot import snapshot_for_rebuild
+
+        try:
+            snap = await run_in_threadpool(snapshot_for_rebuild, "rebuild")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500,
+                detail=f"snapshot failed, rebuild aborted: {exc}",
+            )
         rows = await run_in_threadpool(query_rows,
             "WITH removed AS (DELETE FROM works RETURNING arcid) SELECT count(*) AS removed FROM removed")
         async with _reader_manifest_lock, _reader_session_lock:
             invalidate_reader_caches("")
     with _local_cache_lock:
         _local_cache.clear()
-    return {"ok": True, "removed": int(rows[0]["removed"]), "files_untouched": True}
+    removed = int(rows[0]["removed"])
+    from ..services.schedule_service import log_operation
+
+    log_operation(
+        task="db_rebuild",
+        status="success",
+        summary=(
+            f"removed={removed}; snapshot_works={snap['works']}; "
+            f"snapshot_read_events={snap['read_events']}; snapshot={snap['file']}"
+        ),
+        detail={"snapshot": snap["file"], "truncated": snap["truncated"], "bytes": snap["bytes"]},
+    )
+    return {
+        "ok": True,
+        "removed": removed,
+        "files_untouched": True,
+        # The caller gets the snapshot's name so the UI can offer it as a
+        # download; without that the file is only findable by browsing the host.
+        "snapshot": snap["file"],
+        "snapshot_works": snap["works"],
+        "snapshot_read_events": snap["read_events"],
+    }
 
 _scan_lock = asyncio.Lock()
 _fs_ops_lock = asyncio.Lock()
@@ -676,7 +712,7 @@ async def trigger_local_lib_scan(payload: dict[str, Any] | None = None) -> dict[
                 f"path_hint={path_hint}\n"
                 f"result={result}\n"
             )
-            log_path.write_text(content, encoding="utf-8")
+            log_path.write_text(redact_text(content), encoding="utf-8")
             append_run_history(
                 {
                     "task_id": f"local-lib-scan-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
@@ -700,7 +736,7 @@ async def trigger_local_lib_scan(payload: dict[str, Any] | None = None) -> dict[
                 f"error={e}\n\n"
                 f"traceback:\n{tb}\n"
             )
-            log_path.write_text(content, encoding="utf-8")
+            log_path.write_text(redact_text(content), encoding="utf-8")
             append_run_history(
                 {
                     "task_id": f"local-lib-scan-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
@@ -711,7 +747,7 @@ async def trigger_local_lib_scan(payload: dict[str, Any] | None = None) -> dict[
                     "elapsed_s": 0,
                     "log_file": str(log_path),
                     "stdout_tail": "",
-                    "stderr_tail": str(e),
+                    "stderr_tail": redact_text(str(e)),
                     "task_summary": f"reason={reason}; error={e}",
                 }
             )
@@ -1380,6 +1416,29 @@ def writeback_local_metadata(payload: dict[str, Any] | None = None) -> dict[str,
     }
 
 
+@router.get("/api/local-lib/db-snapshot/{name}")
+def download_db_snapshot(name: str) -> FileResponse:
+    """Hand back the snapshot a rebuild wrote, so it is not just a file on disk.
+
+    The name is matched against a strict pattern instead of being joined onto the
+    directory: the parameter is attacker-controlled and the directory is inside
+    the user's runtime.
+    """
+    from ..services.db_snapshot import SNAPSHOT_DIR
+
+    safe = str(name or "").strip()
+    if not re.fullmatch(r"works_[A-Za-z0-9_-]+\.jsonl", safe):
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    path = SNAPSHOT_DIR / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    return FileResponse(
+        path=str(path),
+        filename=safe,
+        media_type="application/x-ndjson",
+    )
+
+
 @router.get("/api/local-lib/metadata/restore-log/{log_id}")
 def download_local_metadata_restore_log(log_id: str) -> FileResponse:
     safe = str(log_id or "").strip().lower()
@@ -1772,6 +1831,13 @@ def local_lib_meta_batch_update(payload: dict[str, Any] | None = None) -> dict[s
 @router.post("/api/local-lib/delete")
 def delete_local_gallery(payload: dict[str, Any] | None = None) -> dict[str, Any]:
     req = dict(payload or {})
+    # This route can remove the gallery's files from disk, so it follows the same
+    # rule as the database rebuild: an explicit `confirm: true` in the body, not
+    # merely a dialog in the UI. The check sits first on purpose -- a request that
+    # forgot the flag must not reach the row lookup, let alone the delete.
+    # `is not True` rather than truthiness: `"true"` and `1` are not consent.
+    if req.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail="confirmation required")
     arcid = str(req.get("arcid") or "").strip()
     if not arcid:
         raise HTTPException(status_code=400, detail="arcid required")

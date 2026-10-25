@@ -184,8 +184,46 @@ It runs `DELETE FROM works` (**the foreign key cascades, so `read_events` goes t
 * If you have **no** sidecars, that library's embeddings must be recomputed — which is why finishing the
   first vectorization pass already makes `.zinglib_meta/` your safety net;
 * Settings and accounts are outside the sidecars' scope: those come from the database dump in §2.
+* **A snapshot is exported before the rebuild** (`db_snapshots/works_rebuild_<time>.jsonl`: entry metadata plus
+  read history, no vectors) and is downloadable next to the rebuild button; **if the snapshot cannot be written,
+  the rebuild is refused**. See §7 for the semantics.
 
-## 7. One-line checklist
+## 7. The database and the files are not atomic (where the truth lives)
+
+ZingLib writes the same metadata twice: into the database (the index) and into your library
+(`ComicInfo.xml`, `.zinglib_meta/*.json`). There is **no distributed transaction** across the two, so knowing
+which side wins is what keeps a bad day from turning into a wrong repair.
+
+**Write direction: database first, file second.**
+
+* A metadata edit (single or batch) commits the row, then rewrites ComicInfo and the sidecar.
+* **A failed file write does not roll back the row.** The response marks that gallery `file_write_failed` with a
+  reason (`path not found`: the folder was renamed or removed outside the app; `write failed`: the write itself
+  failed) and records it in the operation history (`Settings → Audit`). The real state is then
+  "**the edit is live, the copy on disk is not**".
+* Each file is replaced **atomically**: sibling temp file → `fsync` → `rename` → directory `fsync`. A full disk, a
+  lost permission or a killed process leaves the previous file **byte for byte intact** — never half a file, and
+  no `.tmp` left beside the gallery.
+
+**Read direction: the scanner trusts the files.**
+
+* A scan reads the title and tags out of ComicInfo and writes them back to the database. When the copy on disk is
+  stale, the next scan therefore restores the old value over your newer edit — which is exactly why
+  `file_write_failed` is worth reading.
+* To go the other way (database → disk), use `Settings → Local library → Write metadata back`; it previews
+  (`dry_run`) before it writes.
+
+**What cannot happen:**
+
+* Deleting database rows never deletes your images (a rebuild only deletes `works` and the cascaded read history).
+* A failed sidecar or ComicInfo write never damages the existing copy (see the atomic replacement above).
+
+**What does happen, after a backup:** a rebuild cascades into `read_events`, so it exports
+`runtime/webui/db_snapshots/works_rebuild_<time>.jsonl` (entry metadata + read history, no vectors) **before** it
+deletes, and **aborts the rebuild if that file cannot be written**. The download link sits next to the rebuild
+button.
+
+## 8. One-line checklist
 
 - [ ] The comic files themselves — your own backup strategy (#1)
 - [ ] The database — periodic `pg_dump` (#2, includes settings and accounts)

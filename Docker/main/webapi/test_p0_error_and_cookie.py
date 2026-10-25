@@ -155,7 +155,12 @@ def main_test() -> int:
             raise RuntimeError(f"connect failed for {secret}")
         except RuntimeError as exc:
             payload = _as_dict(asyncio.run(main._unhandled_exception_with_traceback(_request(), exc)))
-        check(secret in json.dumps(payload), "with the switch on, the detail is returned verbatim")
+        text = json.dumps(payload)
+        # The debug switch restores the *message*, not the credentials: a traceback
+        # is for reading, and a password in a traceback is how a debugging aid
+        # becomes a leak. The redactor runs on both paths.
+        check("connect failed for" in text, "with the switch on, the message is returned", str(payload.get("detail")))
+        check(":postgres@" not in text, "but the password is still masked", str(payload.get("detail")))
         os.environ.pop("DATA_UI_EXPOSE_TRACEBACK", None)
 
         print("\n--- the cookie follows the scheme ---")

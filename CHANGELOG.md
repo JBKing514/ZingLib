@@ -10,6 +10,17 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.1.4] - 2026-10-24
+
+- ComicInfo.xml and the rebuilt .cbz are now replaced atomically: the new bytes are written to a sibling temp file, flushed, and renamed over the original. A full disk, a lost permission or a killed process therefore leaves the previous file intact instead of a truncated one, and no .tmp is left beside the gallery.
+- A metadata batch edit now reports galleries whose database row was updated but whose file write failed, as `file_write_failed` on the row and in the response. Previously the return value of the ComicInfo and sidecar writes was discarded, so a stale copy on disk was reported as a clean success and the next scan could silently revert the edit.
+- Metadata write-back, metadata batch update and metadata restore now record their success / skipped / failed counts in the shared operation history (Settings -> audit), so a half-finished job stays visible after the HTTP response is gone.
+- Added tests for atomic replacement under injected disk and fsync failures, for the recovery session's endpoint boundary, and CSRF coverage across every mutating route.
+- Error responses no longer carry a Python traceback by default. Failures now return a short `request_id` that also appears in the server log alongside the full traceback, and Settings -> Other gains an "Expose error details" switch for local debugging.
+- The session cookie is marked `Secure` whenever the request arrived over HTTPS, so a TLS deployment cannot accidentally ship a plaintext cookie. The existing explicit switch still forces it on.
+- Added an automated admin-gate matrix: every mutating route is exercised with a non-admin session and must answer 403, so a new write endpoint cannot be shipped without a role check.
+- Docker Compose pins the pgvector database image by digest and defaults to a versioned application image instead of `latest`.
+
 ## [1.1.3] - 2026-09-28
 
 - _No notes recorded._

@@ -55,6 +55,21 @@ SELF_SERVICE_PATHS = {
 }
 
 
+def _deny(request: Request, status: int, detail: str) -> JSONResponse:
+    """A JSON refusal that carries the request id.
+
+    `auth_guard` answers *before* the route runs, so these responses never reach
+    the exception handlers in `main` that attach the id. Without this the most
+    common user-visible refusal ("administrator required", "authentication
+    required") would be the one kind that cannot be matched to a log line.
+    """
+    rid = str(getattr(getattr(request, "state", None), "request_id", "") or "")
+    content: dict[str, object] = {"detail": detail}
+    if rid:
+        content["request_id"] = rid
+    return JSONResponse(status_code=status, content=content)
+
+
 def _auth_ttl_hours(cfg: dict[str, Any] | None = None) -> int:
     src = cfg or {}
     try:
@@ -63,9 +78,25 @@ def _auth_ttl_hours(cfg: dict[str, Any] | None = None) -> int:
         return 72
 
 
-def _auth_cookie_secure(cfg: dict[str, Any] | None = None) -> bool:
+def _auth_cookie_secure(cfg: dict[str, Any] | None = None, request: Request | None = None) -> bool:
+    """Whether the session cookies get the `Secure` attribute.
+
+    Two ways to be secure and no way to be quietly insecure over TLS:
+
+    * `AUTH_COOKIE_SECURE=1` forces it on, for a proxy that terminates TLS and
+      forwards plain HTTP to this process.
+    * Otherwise the attribute follows the scheme of the actual request, so an
+      HTTPS deployment never ships a plaintext-only cookie by accident while a
+      plain-HTTP local install keeps working (a `Secure` cookie would simply
+      never be sent back, which looks like "the login form does nothing").
+    """
     src = cfg or {}
-    return _as_bool(src.get("AUTH_COOKIE_SECURE"), False)
+    if _as_bool(src.get("AUTH_COOKIE_SECURE"), False):
+        return True
+    if request is None:
+        return False
+    scheme = str(getattr(getattr(request, "url", None), "scheme", "") or "").strip().lower()
+    return scheme == "https"
 
 
 def _auth_cookie_samesite() -> str:
@@ -75,13 +106,20 @@ def _auth_cookie_samesite() -> str:
     return "strict"
 
 
-def _auth_set_cookie(resp: Response, token: str, cfg: dict[str, Any], csrf_token: str = "") -> None:
+def _auth_set_cookie(
+    resp: Response,
+    token: str,
+    cfg: dict[str, Any],
+    csrf_token: str = "",
+    request: Request | None = None,
+) -> None:
     samesite = _auth_cookie_samesite()
+    secure = _auth_cookie_secure(cfg, request)
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=_auth_cookie_secure(cfg),
+        secure=secure,
         samesite=samesite,
         max_age=_auth_ttl_hours(cfg) * 3600,
         path="/",
@@ -91,7 +129,7 @@ def _auth_set_cookie(resp: Response, token: str, cfg: dict[str, Any], csrf_token
             key=AUTH_CSRF_COOKIE_NAME,
             value=str(csrf_token),
             httponly=False,
-            secure=_auth_cookie_secure(cfg),
+            secure=secure,
             samesite=samesite,
             max_age=_auth_ttl_hours(cfg) * 3600,
             path="/",
@@ -112,44 +150,44 @@ async def auth_guard(request: Request, call_next):
         if token and token.startswith("RECV::"):
             user = auth_get_session_user("", token)
             if not user:
-                return JSONResponse(status_code=401, content={"detail": "invalid session"})
+                return _deny(request, 401, "invalid session")
             user_role = str(user.get("role") or "")
             if user_role == "recovery":
                 if p not in RECOVERY_ALLOWED_ENDPOINTS:
-                    return JSONResponse(status_code=403, content={"detail": "recovery mode: limited access"})
+                    return _deny(request, 403, "recovery mode: limited access")
                 if method in {"POST", "PUT", "PATCH", "DELETE"}:
                     csrf_cookie = str(request.cookies.get(AUTH_CSRF_COOKIE_NAME) or "")
                     csrf_header = str(request.headers.get("x-csrf-token") or "")
                     if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
-                        return JSONResponse(status_code=403, content={"detail": "csrf verification failed"})
+                        return _deny(request, 403, "csrf verification failed")
                     if not verify_recovery_csrf(token, csrf_header, pepper=auth_pepper()):
-                        return JSONResponse(status_code=403, content={"detail": "csrf verification failed"})
+                        return _deny(request, 403, "csrf verification failed")
                 request.state.auth_user = user
                 return await call_next(request)
         dsn = db_dsn()
         if not dsn:
             if p in SETUP_OPEN_PATHS:
                 return await call_next(request)
-            return JSONResponse(status_code=503, content={"detail": "database is not configured"})
+            return _deny(request, 503, "database is not configured")
         try:
             st = auth_bootstrap_status(dsn)
         except Exception:
             if p in SETUP_OPEN_PATHS:
                 return await call_next(request)
-            return JSONResponse(status_code=503, content={"detail": "auth service unavailable"})
+            return _deny(request, 503, "auth service unavailable")
         if bool(st.get("configured")):
             if not token:
-                return JSONResponse(status_code=401, content={"detail": "authentication required"})
+                return _deny(request, 401, "authentication required")
 
             cfg, _ = resolve_config()
             ttl_hours = _auth_ttl_hours(cfg)
             user = auth_get_session_user(dsn, token, ttl_hours=ttl_hours)
             if not user:
-                return JSONResponse(status_code=401, content={"detail": "invalid session"})
+                return _deny(request, 401, "invalid session")
             user_role = str(user.get("role") or "")
             if user_role == "recovery":
                 if p not in RECOVERY_ALLOWED_ENDPOINTS:
-                    return JSONResponse(status_code=403, content={"detail": "recovery mode: limited access"})
+                    return _deny(request, 403, "recovery mode: limited access")
 
             # Every mutating route is administrator-only, except the ones that
             # only touch the caller's own account (SELF_SERVICE_PATHS above).
@@ -173,15 +211,15 @@ async def auth_guard(request: Request, call_next):
                 and user_role != "admin"
                 and p not in SELF_SERVICE_PATHS
             ):
-                return JSONResponse(status_code=403, content={"detail": "administrator required"})
+                return _deny(request, 403, "administrator required")
 
             csrf_cookie = str(request.cookies.get(AUTH_CSRF_COOKIE_NAME) or "")
             if method in {"POST", "PUT", "PATCH", "DELETE"}:
                 csrf_header = str(request.headers.get("x-csrf-token") or "")
                 if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
-                    return JSONResponse(status_code=403, content={"detail": "csrf verification failed"})
+                    return _deny(request, 403, "csrf verification failed")
                 if not verify_csrf(dsn, token, csrf_header):
-                    return JSONResponse(status_code=403, content={"detail": "csrf verification failed"})
+                    return _deny(request, 403, "csrf verification failed")
 
             request.state.auth_user = user
             if user.get("extended"):
@@ -192,6 +230,6 @@ async def auth_guard(request: Request, call_next):
     extend_cookies = getattr(request.state, "auth_extend_cookies", None)
     if extend_cookies:
         t_val, c_val, cfg_val = extend_cookies
-        _auth_set_cookie(response, t_val, cfg_val, csrf_token=c_val)
+        _auth_set_cookie(response, t_val, cfg_val, csrf_token=c_val, request=request)
 
     return response

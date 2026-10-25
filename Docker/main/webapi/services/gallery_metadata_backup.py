@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..core.constants import LOCAL_LIB_DIR
+from .atomic_io import atomic_write_text
 from .db_service import query_rows
 
 # Bumped whenever the payload shape changes. A restore refuses a sidecar whose
@@ -470,10 +471,11 @@ def build_payload(
 
 def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     meta_dir(create=True)
-    tmp = path.with_name(f"{path.name}.tmp")
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    tmp.write_text(data, encoding="utf-8")
-    os.replace(tmp, path)
+    # Shared crash-safe replacement: temp file + fsync + rename. A sidecar is
+    # the only copy of that gallery's vectors and history, so a truncated write
+    # is not "a bad backup", it is data loss.
+    atomic_write_text(path, data)
 
 
 def write_sidecar(

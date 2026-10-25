@@ -42,6 +42,47 @@ def load_run_history(limit: int = 200) -> list[dict[str, Any]]:
     return rows[-limit:]
 
 
+def log_operation(
+    *,
+    task: str,
+    status: str,
+    summary: str,
+    detail: dict[str, Any] | None = None,
+    log_file: str = "",
+) -> None:
+    """Record one batch operation in the shared run history, and never raise.
+
+    The report asked for "one operation log for metadata batch updates, ComicInfo
+    write-back and sidecar writes, each recording succeeded / skipped / failed /
+    reason / retryable". ZingLib already has that file and already shows it in
+    the UI (`/api/audit/history`), but only scans and scheduled tasks wrote to it;
+    the three operations that touch the user's files did not, so a half-finished
+    write-back left no trace once the HTTP response was gone.
+
+    Logging is diagnostics: an unwritable history file must never turn a
+    successful operation into a failed one, so every failure here is swallowed.
+    """
+    try:
+        append_run_history(
+            {
+                "task_id": f"{task}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+                "ts": now_iso(),
+                "task": str(task or "operation"),
+                "status": str(status or ""),
+                # Keep the shape the history table already renders: `rc` is what
+                # turns a row red, so only a real failure sets it.
+                "rc": 0 if str(status) in {"success", "dry_run"} else 1,
+                "elapsed_s": 0,
+                "log_file": str(log_file or ""),
+                "stdout_tail": json.dumps(detail or {}, ensure_ascii=False)[:2000],
+                "stderr_tail": "",
+                "task_summary": str(summary or "")[:1000],
+            }
+        )
+    except Exception:
+        pass
+
+
 def _date_to_epoch(date_txt: str, end_of_day: bool = False) -> int | None:
     s = str(date_txt or "").strip()
     if not s:

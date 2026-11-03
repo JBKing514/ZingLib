@@ -38,6 +38,21 @@ const debugOn = typeof window !== "undefined"
 
 function readFeed() {
   if (!debugOn) return;
+  // The reader is its own full-bleed stage; measure whichever is on screen.
+  const stage = document.querySelector(".reader-stage");
+  const main = document.querySelector(".v-main");
+  if (stage) {
+    const sr = stage.getBoundingClientRect();
+    const mr = main ? main.getBoundingClientRect() : null;
+    const spread = document.querySelector(".paged-spread");
+    const spr = spread ? spread.getBoundingClientRect() : null;
+    const mc = main ? getComputedStyle(main) : null;
+    debugInfo.value =
+      `stage ${Math.round(sr.left)}+${Math.round(sr.width)} | main ${mr ? Math.round(mr.left) + "+" + Math.round(mr.width) : "-"}` +
+      ` | spread ${spr ? Math.round(spr.left) + "+" + Math.round(spr.width) : "-"}` +
+      (mc ? ` | main.w=${mc.width} maxw=${mc.maxWidth} padL=${mc.paddingLeft} padR=${mc.paddingRight} cls=${main.className}` : "");
+    return;
+  }
   const row = document.querySelector(".dashboard-page-shell .v-row");
   if (!row) { debugInfo.value = "no feed row"; return; }
   const cs = getComputedStyle(row);

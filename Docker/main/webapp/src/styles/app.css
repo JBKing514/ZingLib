@@ -714,48 +714,20 @@ canvas {
   }
 }
 
-/* Dual-screen: a dialog is centred in the viewport, which puts its middle right
-   on the hinge -- the filter sheet was cut in half by it. Left-aligning inside
-   the overlay's flex container moves it into the left panel without touching
-   `transform`, which Vuetify's own transitions animate; overriding that would
-   break the open/close motion. Menus are deliberately excluded: they belong to
-   the control that opened them and must follow their anchor. */
-html.duo-active .v-dialog,
-html.duo-active .v-overlay.v-dialog .v-overlay__content {
-  max-width: calc(var(--duo-left-width, 100vw) - 32px) !important;
-  margin-left: 16px !important;
-  margin-right: auto !important;
-}
 
-/* Dual-screen: a dialog is centred in the viewport, which puts its middle right
-   on the hinge -- the filter sheet was cut in half by it. Left-aligning inside
-   the overlay's flex container moves it into the left panel without touching
-   `transform`, which Vuetify's own transitions animate; overriding that would
-   break the open/close motion. Menus are deliberately excluded: they belong to
-   the control that opened them and must follow their anchor. */
-html.duo-active .v-dialog,
-html.duo-active .v-overlay.v-dialog .v-overlay__content {
-  max-width: calc(var(--duo-left-width, 100vw) - 32px) !important;
-  margin-left: 16px !important;
-  margin-right: auto !important;
-}
-
-/* On a dual screen the dialogs and the quick-action stack share the left panel
-   and would sit on top of each other. Chasing dialog state through the shell
-   failed twice (the flag turned out to live on the page, not the store), so this
-   reads the DOM instead: while any overlay is open, the stack steps aside.
-   `:has()` is available in the Chromium this ships against. */
+/* The quick actions keep their bottom-left home and simply step aside while an
+   overlay is open: on a dual screen the dialogs live in that same panel, so the
+   two would otherwise sit on top of each other. `:has()` reads what is actually
+   rendered instead of a flag that has to be kept in sync -- two attempts at
+   syncing one failed because the state lived on the page, not in the store. */
 html.duo-active:has(.v-overlay--active) .quick-fab-wrap {
   opacity: 0;
   pointer-events: none;
 }
 
-/* On a dual screen the dialogs and the quick-action stack share the left panel
-   and would sit on top of each other. Chasing dialog state through the shell
-   failed twice (the flag turned out to live on the page, not the store), so this
-   reads the DOM instead: while any overlay is open, the stack steps aside.
-   `:has()` is available in the Chromium this ships against. */
-html.duo-active:has(.v-overlay--active) .quick-fab-wrap {
-  opacity: 0;
-  pointer-events: none;
+/* The store parks the stack beside the rail (92px) or the drawer (292px), which
+   on a dual screen puts it in the middle of the left panel rather than its
+   corner. */
+html.duo-active .quick-fab-wrap {
+  left: 24px !important;
 }

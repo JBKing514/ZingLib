@@ -1530,33 +1530,6 @@ onBeforeUnmount(() => {
   width: 50%;
 }
 
-/* Dual screen: the two halves meet exactly at the centre, which is where the
-   hinge is, so it clips the inner edge of both pages. Each page gives up half
-   the hinge and the gap grows to a full hinge, so the two widths plus the gap
-   add up to exactly 100%: the pair still fills the screen and the empty band
-   sits on the hinge rather than beside it. Widening the gap is what keeps the
-   ordinary 8px gutter from shoving the right page back under the hinge. */
-:global(html.duo-active) .paged-spread.double {
-  gap: var(--duo-hinge, 27px);
-}
-
-:global(html.duo-active) .paged-spread.double .reader-image {
-  width: calc(50% - var(--duo-hinge, 27px) / 2);
-}
-
-/* Dual screen: the two halves meet exactly at the centre, which is where the
-   hinge is, so it clips the inner edge of both pages. Each page gives up half
-   the hinge and the gap grows to a full hinge, so the two widths plus the gap
-   add up to exactly 100%: the pair still fills the screen and the empty band
-   sits on the hinge rather than beside it. Widening the gap is what keeps the
-   ordinary 8px gutter from shoving the right page back under the hinge. */
-:global(html.duo-active) .paged-spread.double {
-  gap: var(--duo-hinge, 27px);
-}
-
-:global(html.duo-active) .paged-spread.double .reader-image {
-  width: calc(50% - var(--duo-hinge, 27px) / 2);
-}
 
 .continuous-image {
   width: 100%;

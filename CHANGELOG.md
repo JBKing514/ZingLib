@@ -10,6 +10,10 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.2.0] - 2026-11-03
+
+- Work in progress: the 1.2.0 feature set is being built on this branch; see ROADMAP.md for the bucket.
+
 ## [1.1.5] - 2026-10-25
 
 - Dependency refresh: psycopg-pool 3.3.3, uvicorn 0.54.0 and cryptography 50.0.2 (patch/minor only), plus the vue runtime at 3.5.44. No behaviour change is intended; the guard suite, the container test suite and the HTTP regression were re-run against the rebuilt image.

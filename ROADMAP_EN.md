@@ -37,10 +37,20 @@ Completed releases are no longer duplicated in the ROADMAP; release history belo
 
 | # | What | Why it is not a patch item |
 | --- | --- | --- |
-| feat-1 | **OPDS**: expose the local library as an OPDS catalog for third-party readers (Panels, KyBook, Moon+ Reader, ...) | A whole new outward protocol surface and data exit; the user plainly gains a new way to use the library → `feat` |
+| feat-1 | **Hinge avoidance on dual-screen devices such as Surface Duo**: content must never be cut by the hinge between the two panels. Start by hardcoding the hinge width (**32–34 CSS px**) for visual verification; the real implementation reads the actual gap between the two segments through the **Viewport Segments API** (`viewport-segment-*` and `window.getWindowSegments()`), falling back to the hardcoded value where the API is unavailable | Adds a segment-aware layout strategy that the reader spread, the feed grid, and the sidebar drawer all have to respect → `feat` |
 | feat-2 | **Auto-resolution resampling strategy**: offer Performance (BILINEAR) and Quality (Lanczos) modes, with clear copy that every server-side downsample trades CPU time for network bandwidth; users may choose for their host or bypass processing with Original | Adds a visible quality/compute policy and setting that changes server image-processing cost → `feat` |
 | feat-3 | **Reader double buffering and page transitions**: retain current and next display buffers; if the next page is not ready, keep the current page visible with loading progress and transition only after decoding completes, never exposing the black stage | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
 | feat-4 | **Remove in-app page/DPI zoom**: delete the zoom setting, runtime CSS scaling, and related coordinate compensation; keep application rendering at 100%, ignore existing saved values, and leave whole-page scaling to browser zoom or device DPI | Contracts the user-facing feature surface and reunifies the coordinate system used by long press, dragging, overlays, and hit testing → `feat` |
+| feat-5 | **Infinite-scroll performance**: scrolling starts stuttering at roughly 500–600 items. **Measure before changing anything**: build a library of about 1000 items, then use a separate scroll test to measure frame time, long tasks, layout/paint work, and image decoding; decide the fix (list virtualisation, image decoding policy, or the rendering path) only after the bottleneck is known | Likely changes the feed's rendering and data-layer structure, and adds a reproducible performance criterion → `feat` |
+
+## 1.3.0 — the minor after that (`feat` work plus major dependency upgrades)
+
+**Logged only, not implemented.** Same contract as the bucket above: no code until the branch is cut.
+
+| # | What | Note |
+| --- | --- | --- |
+| feat-1 | **OPDS**: expose the local library as an OPDS catalog for third-party readers (Panels, KyBook, Moon+ Reader, ...) | Moved here from `1.2.0` on 2026-11-03; handled together with the dependency upgrades |
+| chore-1 | **Major dependency upgrades**: front end `vue-router` 5 / `vuetify` 4 / `pinia` 4 / `vite-plugin-pwa` 2; back end `fastapi` 0.159 / `scipy` 1.18; CI `upload-artifact` 7 / `download-artifact` 8 | All change behaviour or need code adaptation, so none belongs in the patch line; `fastapi` and `scipy` do not even pass CI today and need separate investigation |
 
 ## Relationship to the other files
 

@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick">
-          <v-card class="pa-4 mb-4" :class="{ 'duo-left-panel': dualScreenActive }">
+          <v-card class="pa-4 mb-4" :class="{ 'duo-header': dualScreenActive }">
             <div class="mb-3">
               <div class="d-flex align-center flex-wrap ga-2 home-search-row">
               <v-text-field
@@ -41,8 +41,8 @@
               </v-text-field>
 
                 <template v-if="!isMobile">
-                  <v-btn v-if="homeTab === 'local_gallery' && !isLocalFolderMode()" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
-                  <v-btn color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
+                  <v-btn v-if="homeTab === 'local_gallery' && !isLocalFolderMode()" class="home-sort-btn" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
+                  <v-btn class="home-filter-btn" color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
                 </template>
               <div v-if="isMobile" class="mobile-action-row">
                 <v-btn
@@ -97,7 +97,7 @@
                  change how the feed is presented/persisted, and neither needs
                  an explanatory sentence ("按目录结构浏览本地库" was removed --
                  the switch's own label already says it). -->
-            <div v-if="homeTab === 'local_gallery'" class="mt-2">
+            <div v-if="homeTab === 'local_gallery'" class="mt-2 duo-switch-row">
               <div class="d-flex align-center flex-wrap ga-4">
                 <v-switch
                   :model-value="isLocalFolderMode()"
@@ -2800,13 +2800,69 @@ export default {
   border: 1px solid rgba(148, 163, 184, 0.5);
 }
 
-/* Dual-screen: the search box and its sort/filter/view controls are chrome, so
-   they stay on the left panel while the feed itself spans both. The card sits
-   inside a container with 24px of padding on each side, hence the 48px: the
-   left edge is already inset, and the right edge needs the same gap so the seams
-   do not touch the hinge. */
-.duo-left-panel {
-  max-width: calc(var(--duo-left-width, 100%) - 48px);
+/* Dual-screen header: the controls form one band across the hinge instead of
+   crowding into the left panel and leaving the right one empty.
+
+   Six tracks -- two per panel plus the hinge -- so the four groups land in a
+   2 x 2 arrangement: the search field above two equal-width action buttons on
+   the left, the view toggle above the switch row on the right. The hinge track
+   is what keeps the two halves visually separate without any spacer element.
+
+   `.home-search-row` uses `display: contents`, which is the whole trick: sort
+   and filter live inside that row for the single-panel layout, and dissolving
+   the wrapper lets them become grid items here without duplicating the markup. */
+.duo-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr var(--duo-hinge, 27px) 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Both wrappers have to dissolve. `.mb-3` is the one that is easy to miss: the
+   search row sits inside it, so without this the whole group is a single grid
+   item in track 1 and the buttons stack inside it -- measured on the device as
+   `mb-3: 241x128`, one track wide.
+
+   `!important` because the inner element also carries Vuetify's `d-flex`, which
+   is itself `display: flex !important`. */
+.duo-header > .mb-3,
+.duo-header .home-search-row {
+  display: contents !important;
+}
+
+.duo-header .home-search-input {
+  grid-column: 1 / 3;
+  grid-row: 1;
+}
+
+/* Two equal buttons rather than two icons: the row they sit on is otherwise
+   empty once the hinge has taken its share. */
+.duo-header .home-sort-btn,
+.duo-header .home-filter-btn {
+  width: 100% !important;
+  height: 44px !important;
+  grid-row: 2;
+}
+
+.duo-header .home-sort-btn {
+  grid-column: 1;
+}
+
+.duo-header .home-filter-btn {
+  grid-column: 2;
+}
+
+.duo-header .home-tab-row {
+  grid-column: 4 / 6;
+  grid-row: 1;
+  justify-content: flex-start !important;
+}
+
+.duo-header .duo-switch-row {
+  grid-column: 4 / 6;
+  grid-row: 2;
+  margin-top: 0 !important;
 }
 
 /* Keeps the staged-tag strip from collapsing the dialog when it is empty. */

@@ -739,3 +739,23 @@ html.duo-active .v-overlay.v-dialog .v-overlay__content {
   margin-left: 16px !important;
   margin-right: auto !important;
 }
+
+/* On a dual screen the dialogs and the quick-action stack share the left panel
+   and would sit on top of each other. Chasing dialog state through the shell
+   failed twice (the flag turned out to live on the page, not the store), so this
+   reads the DOM instead: while any overlay is open, the stack steps aside.
+   `:has()` is available in the Chromium this ships against. */
+html.duo-active:has(.v-overlay--active) .quick-fab-wrap {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* On a dual screen the dialogs and the quick-action stack share the left panel
+   and would sit on top of each other. Chasing dialog state through the shell
+   failed twice (the flag turned out to live on the page, not the store), so this
+   reads the DOM instead: while any overlay is open, the stack steps aside.
+   `:has()` is available in the Chromium this ships against. */
+html.duo-active:has(.v-overlay--active) .quick-fab-wrap {
+  opacity: 0;
+  pointer-events: none;
+}

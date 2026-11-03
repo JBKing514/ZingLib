@@ -50,12 +50,9 @@
 
     <duo-hinge-marker />
 
-    <!-- On a dual screen the stack moves to the bottom of the right panel: the
-         left one is where the reader taps, and the quick actions are chrome. -->
     <div
       v-if="!hideReaderChrome && ui.tab === 'dashboard' && dashboardStore.showScrollQuickActions"
       class="quick-fab-wrap"
-      :class="{ 'duo-fab-right': dualScreenActive }"
       :style="dashboardStore.quickFabStyle"
     >
       <v-btn color="secondary" icon="mdi-magnify" size="large" class="quick-fab" @click="dashboardStore.quickSearchOpen = true" />
@@ -100,8 +97,6 @@ const hideReaderChrome = computed(() => {
 
 const dashboardTab = computed(() => String(dashboardStore.homeTab || "local_gallery"));
 
-const { state: dualState } = useDualScreen();
-const dualScreenActive = computed(() => Boolean(dualState.active));
 
 // Owned by the shell so every page sees the same geometry, including the ones
 // that never mount the marker. It also sets the `--duo-*` custom properties that
@@ -139,22 +134,3 @@ function onSidebarGoHome(homeTab) {
 
 </script>
 
-<style scoped>
-/* The inline `left` from the store wins over a plain rule, so this has to be
-   `!important`; `right` is what actually places it. */
-/* `left` is set inline by the store, so it takes `!important` to release it. */
-.duo-fab-right {
-  left: auto !important;
-  right: 24px !important;
-}
-
-/* While the detail card owns the right panel the stack would sit underneath it:
-   the scroll handler keeps re-showing it, so it flicks into view and is covered
-   again. The page publishes the open state on <html> -- `dashboardStore` has no
-   such flag, and reading a page-local computed from here silently returned
-   undefined, which is why the first attempt never moved. */
-:global(html.duo-preview-open) .duo-fab-right {
-  left: 24px !important;
-  right: auto !important;
-}
-</style>

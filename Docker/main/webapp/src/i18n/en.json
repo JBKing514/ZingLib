@@ -965,5 +965,7 @@
   "settings.reader.wheel_natural": "Natural scrolling direction",
   "home.progress.title": "Reading progress {percent}%",
   "settings.local_lib.duo_mode": "Dual-screen layout",
-  "settings.local_lib.duo_mode_hint": "Split the layout across both panels and keep content off the hinge; enabled automatically on Surface Duo, manual elsewhere"
+  "settings.local_lib.duo_mode_hint": "Split the layout across both panels and keep content off the hinge; enabled automatically on Surface Duo, manual elsewhere",
+  "settings.other.duo_debug": "Dual-screen debug overlay",
+  "settings.other.duo_debug_hint": "Adds duo=1 to the address and shows the measured panel/hinge geometry; turn it off for normal use"
 }

@@ -5,7 +5,7 @@
     look at the device with a marked band and compare it with the physical
     hinge. Enabled with `?duo=1`, removed once the number is settled.
   -->
-  <div v-if="dual.state.active" class="duo-marker" aria-hidden="true">
+  <div v-if="dual.state.active && debugOn" class="duo-marker" aria-hidden="true">
     <div class="duo-marker__band" :style="{ left: `${dual.state.leftWidth}px`, width: `${dual.state.gap}px` }" />
     <div class="duo-marker__edge" :style="{ left: `${dual.state.leftWidth}px` }" />
     <div
@@ -17,13 +17,15 @@
       <template v-if="debugOn">
         <br />
         {{ debugInfo }}
+        <br />
+        {{ dialogInfo }}
       </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useDualScreen } from "../composables/useDualScreen";
 
 const dual = useDualScreen();
@@ -31,13 +33,30 @@ const dual = useDualScreen();
 // `?duo_debug=1` prints what the browser actually computed for the feed grid.
 // Reading pixels off a screenshot has cost more time than this will.
 const debugInfo = ref("");
+const dialogInfo = ref("");
+let readoutTimer;
 // Tied to `?duo=1` because the router rewrites the URL and drops unknown
 // parameters, while `duo` survives -- it is read by the composable too.
-const debugOn = typeof window !== "undefined"
-  && new URLSearchParams(window.location.search).get("duo") === "1";
+const debugOn = computed(
+  () => Boolean(dual.state.debug)
+    || (typeof window !== "undefined"
+      && new URLSearchParams(window.location.search).get("duo") === "1")
+);
 
 function readFeed() {
-  if (!debugOn) return;
+  if (!debugOn.value) return;
+  // Measure only the active dashboard dialog, not the first overlay in the DOM.
+  const overlay = document.querySelector(".home-filter-overlay.v-overlay--active");
+  const content = overlay?.querySelector(".home-filter-content");
+  const sheet = content?.querySelector(".home-filter-sheet");
+  const sort = document.querySelector(".home-sort-overlay.v-overlay--active .home-sort-content");
+  const menu = document.querySelector(".home-filter-tag-menu");
+  const bounds = (el) => {
+    if (!el || !el.getClientRects().length) return "-";
+    const r = el.getBoundingClientRect();
+    return `${Math.round(r.left)}..${Math.round(r.right)} y${Math.round(r.top)}..${Math.round(r.bottom)}`;
+  };
+  dialogInfo.value = `filter ${bounds(content)} | sheet ${bounds(sheet)} | sort ${bounds(sort)} | menu ${bounds(menu)}`;
   // The reader is its own full-bleed stage; measure whichever is on screen.
   const stage = document.querySelector(".reader-stage");
   const main = document.querySelector(".v-main");
@@ -72,10 +91,15 @@ function readFeed() {
 }
 
 onMounted(() => {
-  if (!debugOn) return;
-  setTimeout(readFeed, 1600);
-  setTimeout(readFeed, 3200);
+  watch(debugOn, (on) => {
+    clearInterval(readoutTimer);
+    if (!on) return;
+    readFeed();
+    readoutTimer = setInterval(readFeed, 1200);
+  }, { immediate: true });
 });
+
+onUnmounted(() => clearInterval(readoutTimer));
 
 const label = computed(() => {
   const s = dual.state;
@@ -127,6 +151,7 @@ const label = computed(() => {
   background: rgba(10, 14, 20, 0.86);
   color: #ffd9df;
   font: 12px/1.3 ui-monospace, monospace;
-  white-space: nowrap;
+  max-width: calc(var(--duo-left-width) - 16px);
+  white-space: normal;
 }
 </style>

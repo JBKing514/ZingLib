@@ -37,6 +37,7 @@ import { computed, reactive, readonly } from "vue";
 export const DEFAULT_HINGE_CSS = 27;
 
 const STORAGE_KEY = "zinglib.duoMode";
+const DEBUG_KEY = "zinglib.duoDebug";
 const DUO_MODEL = /surface\s*duo/i;
 
 
@@ -64,6 +65,8 @@ const state = reactive({
   model: "",
   posture: "",
   secure: true,
+  /** Debug mode: force the layout on and show the geometry readout. */
+  debug: false,
   gap: DEFAULT_HINGE_CSS,
   leftWidth: 0,
   rightWidth: 0,
@@ -90,6 +93,42 @@ function writeMode(mode) {
   } catch (_e) {
     /* private mode / disabled storage: the preference simply does not persist */
   }
+}
+
+function readDebug() {
+  try {
+    return localStorage.getItem(DEBUG_KEY) === "1";
+  } catch (_e) {
+    return false;
+  }
+}
+
+/**
+ * Turn the debug overlay on, and make the address say so.
+ *
+ * The readout is driven by `?duo=1`, which is also what forces the layout on, so
+ * the switch writes that parameter into the address rather than inventing a
+ * second path through the code. `replaceState` keeps it out of the history.
+ */
+export function setDualScreenDebug(on) {
+  state.debug = Boolean(on);
+  try {
+    if (state.debug) localStorage.setItem(DEBUG_KEY, "1");
+    else localStorage.removeItem(DEBUG_KEY);
+  } catch (_e) {
+    /* storage refused; the flag still applies for this page */
+  }
+  if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+    try {
+      const url = new URL(window.location.href);
+      if (state.debug) url.searchParams.set("duo", "1");
+      else url.searchParams.delete("duo");
+      window.history.replaceState(null, "", url.toString());
+    } catch (_e) {
+      /* a malformed address is not worth breaking the toggle over */
+    }
+  }
+  apply();
 }
 
 export function setDualScreenMode(mode) {
@@ -155,7 +194,7 @@ function apply() {
   const posture = navigator.devicePosture ? String(navigator.devicePosture.type || "") : "";
   const secure = window.isSecureContext !== false;
   const touch = Number(navigator.maxTouchPoints || 0) > 0;
-  const forced = queryFlag("duo");
+  const forced = queryFlag("duo") || state.debug;
   const override = hingeOverride();
 
   const isDuo = DUO_MODEL.test(state.model);
@@ -249,6 +288,7 @@ export function useDualScreen() {
   if (!started && typeof window !== "undefined") {
     started = true;
     state.mode = readMode();
+    state.debug = readDebug();
     apply();
 
     window.addEventListener("resize", apply);
@@ -275,6 +315,7 @@ export function useDualScreen() {
     rightWidth: computed(() => state.rightWidth),
     isMeasured: computed(() => state.measured),
     setMode: setDualScreenMode,
+    setDebug: setDualScreenDebug,
     refresh: apply,
   };
 }

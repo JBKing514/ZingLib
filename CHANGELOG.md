@@ -13,6 +13,8 @@ versions follow Semantic Versioning:
 ## [1.2.0] - 2026-11-03
 
 - Work in progress: the 1.2.0 feature set is being built on this branch; see ROADMAP.md for the bucket.
+- Added Surface Duo layouts with hinge-aware gallery grids, right-panel previews and reader spreads, plus manual layout control and an optional geometry debug overlay.
+- Filter and local-library sort dialogs stay within the left panel on dual screens. Filter categories wrap into compact text-sized buttons, keeping the default menu visible without scrolling on the tested Duo 2 landscape viewport.
 
 ## [1.1.5] - 2026-10-25
 

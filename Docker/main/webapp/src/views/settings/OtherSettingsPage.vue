@@ -20,18 +20,37 @@
       hide-details="auto"
       persistent-hint
     />
+
+    <v-divider class="my-3" />
+    <v-switch
+      :model-value="duoDebug"
+      :label="t('settings.other.duo_debug')"
+      :messages="t('settings.other.duo_debug_hint')"
+      color="teal"
+      inset
+      hide-details="auto"
+      persistent-hint
+      @update:model-value="setDuoDebug"
+    />
   </v-card>
 </template>
 
 <script>
 import { useAppStore } from "../../stores/appStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { computed } from "vue";
+import { useDualScreen } from "../../composables/useDualScreen";
 
 export default {
   setup() {
     const settingsStore = useSettingsStore();
     const appStore = useAppStore();
-    return { ...settingsStore, appStore };
+    // Debug overlay for the dual-screen layout: forcing it on is the only way to
+    // inspect the geometry on a device that does not report itself as a Duo.
+    const dual = useDualScreen();
+    const duoDebug = computed(() => Boolean(dual.state.debug));
+    const setDuoDebug = (on) => dual.setDebug(on);
+    return { ...settingsStore, appStore, duoDebug, setDuoDebug };
   },
 };
 </script>

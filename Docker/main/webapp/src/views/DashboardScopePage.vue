@@ -548,8 +548,8 @@
             </v-card>
           </v-dialog>
 
-          <v-dialog v-model="homeFiltersOpen" max-width="680">
-            <v-card class="pa-4" variant="flat">
+          <v-dialog v-model="homeFiltersOpen" class="home-filter-overlay" content-class="home-filter-content" max-width="680" :z-index="3200">
+            <v-card class="pa-4 home-filter-sheet" variant="flat">
               <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('home.filter.title') }}</div>
               <div class="text-caption text-medium-emphasis mb-3">{{ t('home.filter.hint') }}</div>
 
@@ -561,17 +561,12 @@
                 </div>
               </div>
 
-              <div
-                class="mb-4"
-                :class="{ 'mobile-category-grid': isMobile }"
-                :style="{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, max-content)' : 'repeat(5, 1fr)', gap: isMobile ? '6px' : '8px' }"
-              >
+              <div class="mb-4 home-filter-categories">
                 <v-btn
                   v-for="cat in pinnedHomeFilterCategoryDefs"
                   :key="`f-${cat.key}`"
                   class="category-btn text-caption font-weight-bold"
-                  :class="{ 'mobile-category-btn': isMobile }"
-                  :height="isMobile ? 40 : 32"
+                  height="32"
                   rounded="lg"
                   variant="flat"
                   :style="homeFilterCategoryStyle(cat.key, cat.color)"
@@ -585,6 +580,7 @@
                 v-model="homeFilters.tags"
                 v-model:search="filterTagInput"
                 :items="filterTagSuggestions"
+                :menu-props="{ contentClass: 'home-filter-tag-menu' }"
                 multiple
                 chips
                 closable-chips
@@ -682,7 +678,7 @@
             @quick-add-tag="openQuickTagDialog"
           />
 
-          <v-dialog v-model="localSortOpen" max-width="520">
+          <v-dialog v-model="localSortOpen" class="home-sort-overlay" content-class="home-sort-content" max-width="520" :z-index="3200">
             <v-card class="pa-4" variant="flat">
               <div class="text-subtitle-1 font-weight-medium mb-3">{{ t('home.local.sort.title') }}</div>
               <v-radio-group v-model="localSortBy" color="primary" hide-details>
@@ -2470,14 +2466,18 @@ export default {
   transform: translateY(-2px);
 }
 
-.mobile-category-grid {
-  justify-content: center;
+.home-filter-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.mobile-category-btn {
-  min-width: 138px;
-  width: 138px;
-  padding-inline: 6px !important;
+.home-filter-categories .category-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  max-width: 100%;
+  padding-inline: 10px !important;
 }
 
 .home-items-zone {

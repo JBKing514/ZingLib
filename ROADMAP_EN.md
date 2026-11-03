@@ -31,13 +31,13 @@ An entry leaves its `feat` bucket only when: (1) the corresponding branch has be
 
 Completed releases are no longer duplicated in the ROADMAP; release history belongs in `CHANGELOG.md`. The current patch line repairs existing behaviour only and does not add new feature surface.
 
-## 1.2.0 — the next minor's `feat` bucket (logged only, not implemented)
+## 1.2.0 — current minor worklist
 
-**The branch has not been cut.** Until `v1.2.0-beta` really exists, entries here are **logged only — no code**.
+**The `v1.2.0-beta` branch is active.** `feat-1` is complete and verified on a Surface Duo 2; `feat-2` through `feat-5` await implementation.
 
 | # | What | Why it is not a patch item |
 | --- | --- | --- |
-| feat-1 | **Hinge avoidance on dual-screen devices such as Surface Duo**: content must never be cut by the hinge between the two panels. Start by hardcoding the hinge width (**32–34 CSS px**) for visual verification; the real implementation reads the actual gap between the two segments through the **Viewport Segments API** (`viewport-segment-*` and `window.getWindowSegments()`), falling back to the hardcoded value where the API is unavailable | Adds a segment-aware layout strategy that the reader spread, the feed grid, and the sidebar drawer all have to respect → `feat` |
+| feat-1 | **Complete: Surface Duo hinge avoidance** for the feed, right-panel preview, reader spreads, and left-panel filter/sort dialogs. Use the **27 CSS px** gap calibrated on a Duo 2 when segment APIs are unavailable, with a manual layout switch and an optional geometry overlay. Prefer measured segments when the enumeration API is available | Adds a segment-aware layout strategy → `feat`; verified on the device and in ordinary phone/desktop layouts |
 | feat-2 | **Auto-resolution resampling strategy**: offer Performance (BILINEAR) and Quality (Lanczos) modes, with clear copy that every server-side downsample trades CPU time for network bandwidth; users may choose for their host or bypass processing with Original | Adds a visible quality/compute policy and setting that changes server image-processing cost → `feat` |
 | feat-3 | **Reader double buffering and page transitions**: retain current and next display buffers; if the next page is not ready, keep the current page visible with loading progress and transition only after decoding completes, never exposing the black stage | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
 | feat-4 | **Remove in-app page/DPI zoom**: delete the zoom setting, runtime CSS scaling, and related coordinate compensation; keep application rendering at 100%, ignore existing saved values, and leave whole-page scaling to browser zoom or device DPI | Contracts the user-facing feature surface and reunifies the coordinate system used by long press, dragging, overlays, and hit testing → `feat` |

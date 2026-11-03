@@ -732,42 +732,23 @@ html.duo-active .quick-fab-wrap {
   left: 24px !important;
 }
 
-/* Dual screen reader: the two pages are 50% each, so they meet exactly at the
-   centre -- which is where the hinge is, and it clips both inner edges.
-   Widening the gutter to the hinge makes the pair overflow by that much, so the
-   two flex items shrink by half each and the empty band lands on the hinge.
-   Their widths are never touched: an earlier attempt that did broke the shell in
-   a way that was never explained, so this stays on the container. It lives in
-   the global sheet because `:global()` inside the reader's scoped block did not
-   survive compilation. */
+/* Keep the empty band between reader pages over the physical hinge. */
 html.duo-active .paged-spread.double {
   gap: var(--duo-hinge, 27px);
   overflow: hidden;
 }
 
-/* Without this the two pages keep their full 50% and the pair simply overflows,
-   which clips the outer edge of the right page. Letting them shrink is what
-   turns the extra hinge into an even reduction on both. */
 html.duo-active .paged-spread.double > .reader-image {
   min-width: 0;
 }
 
-/* Without this the two pages keep their full 50% and the pair simply overflows,
-   which clips the outer edge of the right page. Letting them shrink is what
-   turns the extra hinge into an even reduction on both. */
-html.duo-active .paged-spread.double > .reader-image {
-  min-width: 0;
-}
-
-/* Dual screen reader: the two pages are 50% each, so they meet exactly at the
-   centre -- which is where the hinge is, and it clips both inner edges.
-   Widening the gutter to the hinge makes the pair overflow by that much, so the
-   two flex items shrink by half each and the empty band lands on the hinge.
-   Their widths are never touched: an earlier attempt that did broke the shell in
-   a way that was never explained, so this stays on the container. It lives in
-   the global sheet because `:global()` inside the reader's scoped block did not
-   survive compilation. */
-html.duo-active .paged-spread.double {
-  gap: var(--duo-hinge, 27px);
-  overflow: hidden;
+/* Keep the full-viewport modal/scrim; only its content belongs to the left panel.
+   The content class is supplied explicitly because Vuetify teleports overlays. */
+html.duo-active .home-filter-overlay > .home-filter-content,
+html.duo-active .home-sort-overlay > .home-sort-content {
+  left: 16px;
+  right: auto;
+  width: calc(var(--duo-left-width) - 32px);
+  max-width: calc(var(--duo-left-width) - 32px) !important;
+  margin-inline: 0;
 }

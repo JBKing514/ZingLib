@@ -15,6 +15,8 @@ versions follow Semantic Versioning:
 - Work in progress: the 1.2.0 feature set is being built on this branch; see ROADMAP.md for the bucket.
 - Added Surface Duo layouts with hinge-aware gallery grids, right-panel previews and reader spreads, plus manual layout control and an optional geometry debug overlay.
 - Filter and local-library sort dialogs stay within the left panel on dual screens. Filter categories wrap into compact text-sized buttons, keeping the default menu visible without scrolling on the tested Duo 2 landscape viewport.
+- Long-press gallery pickers keep all galleries from the current row and open within the screen where the press began, keeping selection controls clear of the hinge.
+- Removed application-level page zoom and its gesture coordinate compensation. Existing saved zoom preferences are ignored; browser zoom and device DPI control overall scaling.
 
 ## [1.1.5] - 2026-10-25
 

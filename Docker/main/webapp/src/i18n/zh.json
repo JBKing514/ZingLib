@@ -863,7 +863,6 @@
   "theme.mode.light": "浅色",
   "theme.mode.dark": "深色",
   "topbar.settings.language": "语言",
-  "topbar.settings.zoom": "页面缩放",
   "settings.text_ingest.prune": "全量导入时清理未出现的记录",
   "settings.worker.only_missing": "入库服务仅处理缺失向量信息的画廊",
   "settings.text_ingest.batch": "元数据导入批大小",

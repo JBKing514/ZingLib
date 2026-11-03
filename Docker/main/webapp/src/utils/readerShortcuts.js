@@ -92,6 +92,8 @@ export function bindReaderShortcuts({
 
   const onWheel = (event) => {
     if (!wheelEnabled) return;
+    // Browser zoom and trackpad pinch must not turn pages or consume damping.
+    if (event?.ctrlKey || event?.metaKey) return;
     if (isEditableTarget(event?.target)) return;
     const action = resolveWheelAction(event?.deltaY, { natural: wheelNatural });
     if (!action) return;

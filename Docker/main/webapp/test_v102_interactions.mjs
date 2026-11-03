@@ -72,14 +72,6 @@ test("a wheel tap resolves on pointerup without waiting for a synthetic click", 
   assert.match(wheel, /if \(draggedThisGesture\)/);
 });
 
-test("page zoom scales the application surface instead of the root font", () => {
-  const css = read("./src/styles/app.css");
-  assert.match(css, /#app \{[\s\S]*?zoom: var\(--zgl-page-zoom\)/);
-  assert.match(css, /#app \{[\s\S]*?width: 100%/);
-  assert.doesNotMatch(css, /width: calc\([^\n]*zgl-page-zoom/);
-  assert.doesNotMatch(css, /font-size: calc\(16px \* var\(--zgl-page-zoom\)\)/);
-});
-
 test("dashboard view buttons remain complete independent capsules", () => {
   const dash = read("./src/views/DashboardScopePage.vue");
   assert.doesNotMatch(dash, /<v-btn-toggle[\s\S]*?\bdivided\b[\s\S]*?<\/v-btn-toggle>/);

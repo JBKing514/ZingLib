@@ -17,15 +17,6 @@
           :active="lang === opt.value"
           @click="handleLanguageChange(opt.value)"
         />
-        <v-divider class="my-1" />
-        <v-list-subheader>{{ t('topbar.settings.zoom') }}</v-list-subheader>
-        <v-list-item
-          v-for="opt in zoomOptions"
-          :key="`zoom-${opt.value}`"
-          :title="opt.title"
-          :active="Number(pageZoom) === Number(opt.value)"
-          @click="emit('update:zoom', opt.value)"
-        />
       </v-list>
     </v-menu>
     <v-menu location="bottom end">
@@ -87,8 +78,6 @@ defineProps({
   themeModeIcon: { type: String, required: true },
   langOptions: { type: Array, default: () => [] },
   lang: { type: String, default: "zh" },
-  zoomOptions: { type: Array, default: () => [] },
-  pageZoom: { type: Number, default: 100 },
   notices: { type: Array, default: () => [] },
   authUser: { type: Object, default: () => ({}) },
   t: { type: Function, required: true },
@@ -99,7 +88,6 @@ const emit = defineEmits([
   "toggle-drawer",
   "cycle-theme",
   "update:lang",
-  "update:zoom",
   "dismiss-notice",
   "notice-action",
   "clear-all-notices",

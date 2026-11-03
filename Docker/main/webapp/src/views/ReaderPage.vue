@@ -1479,7 +1479,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100dvh;
   overflow: hidden;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   -webkit-touch-callout: none;
   user-select: none;
 }

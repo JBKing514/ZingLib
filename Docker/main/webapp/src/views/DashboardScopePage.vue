@@ -738,6 +738,7 @@ import {
 } from "../utils/tagNamespaces";
 import { getCategoryLabel } from "../utils/categoryPresets";
 import { mergeMetaEditIntoItem } from "../utils/metaEditMerge";
+import { galleryPickerLayout } from "../utils/galleryPickerLayout";
 
 // What a tap on the page is allowed to mean instead of "put the tablet preview
 // away". Galleries stay galleries, controls stay controls, and a panel that
@@ -830,6 +831,7 @@ export default {
       longPressPickerOpen: false,
       longPressPickerItems: [],
       longPressPickerIndex: 0,
+      longPressPickerLayout: null,
       _longPressTimer: null,
       _longPressActive: false,
       _longPressStartX: 0,
@@ -924,6 +926,7 @@ export default {
       };
     },
     longPressPickerStyle() {
+      const panel = this.longPressPickerLayout?.panel;
       const y = Number(this._longPressAnchorY || 0);
       if (!Number.isFinite(y) || y <= 0) return {};
       const vh = Number(this.viewportWidth || (typeof window !== "undefined" ? window.innerWidth : 0) || 0) > 0
@@ -931,7 +934,10 @@ export default {
         : 0;
       const cardH = 210;
       const top = Math.max(16, Math.min(Math.max(16, vh - cardH - 16), Math.round(y - cardH * 0.55)));
-      return { top: `${top}px` };
+      return {
+        top: `${top}px`,
+        ...(panel ? { left: `${panel.left}px`, right: "auto", width: `${panel.width}px`, paddingInline: "12px", boxSizing: "border-box" } : {}),
+      };
     },
     longPressCardStyle() {
       const n = Math.max(1, Number((this.longPressPickerItems || []).length || 1));
@@ -939,7 +945,9 @@ export default {
       const gap = 5;
       const sidePad = 16;
       const target = n * item + (n - 1) * gap + sidePad;
-      return { width: `min(92vw, ${Math.round(target)}px)` };
+      return this.longPressPickerLayout?.panel
+        ? { width: `min(100%, ${Math.round(target)}px)`, maxWidth: "100%" }
+        : { width: `min(92vw, ${Math.round(target)}px)` };
     },
     showMobilePreview() {
       return this.useRoutePreview && !!String(this.$route?.query?.pv || "").trim();
@@ -1189,6 +1197,7 @@ export default {
       this.closeMobilePreview();
     },
     homeGridColumns() {
+      if (this.dualScreenActive) return this.showMobilePreview ? 2 : 4;
       const w = Number(this.viewportWidth || (typeof window !== "undefined" ? window.innerWidth : 0) || 0);
       const wide = String(this.homeViewMode || "wide") === "wide";
       if (w >= 1280) return wide ? 4 : 6;
@@ -1201,11 +1210,18 @@ export default {
       const rows = Array.isArray(this.filteredHomeItems) ? this.filteredHomeItems : [];
       const cols = Math.max(1, Number(this.homeGridColumns() || 1));
       const i = Math.max(0, Math.min(rows.length - 1, Number(index || 0)));
-      const rowStart = Math.floor(i / cols) * cols;
-      const rowItems = rows.slice(rowStart, rowStart + cols).filter((x) => String(x?.source || "") !== "folder");
+      const layout = galleryPickerLayout({
+        index: i, columns: cols, dualScreen: this.dualScreenActive,
+        startX: Number(touch?.clientX ?? this._longPressStartX ?? 0),
+        leftWidth: dualScreen.state.leftWidth,
+        rightWidth: dualScreen.state.rightWidth,
+        hinge: dualScreen.state.gap,
+      });
+      const rowItems = rows.slice(layout.start, layout.end).filter((x) => String(x?.source || "") !== "folder");
       if (!rowItems.length) return;
       const selectedIndex = Math.max(0, rowItems.findIndex((x) => this.previewItemKey(x) === this.previewItemKey(item)));
       this.longPressPickerItems = rowItems;
+      this.longPressPickerLayout = layout;
       this.longPressPickerIndex = selectedIndex;
       this._longPressBaseIndex = selectedIndex;
       this._longPressMoveX = Number(touch?.clientX || this._longPressStartX || 0);
@@ -1241,6 +1257,7 @@ export default {
       }
       this.longPressPickerOpen = false;
       this.longPressPickerItems = [];
+      this.longPressPickerLayout = null;
       this.longPressPickerIndex = 0;
       this._longPressBaseIndex = 0;
       this._longPressAnchorY = 0;
@@ -2482,7 +2499,7 @@ export default {
 
 .home-items-zone {
   min-height: 42vh;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
 }
 
 .home-card,
@@ -2502,7 +2519,7 @@ export default {
    scrubs on. Declaring the card as a self-managed surface removes both: the
    browser keeps vertical scrolling, gives up everything else. */
 .home-card {
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
   user-select: none;

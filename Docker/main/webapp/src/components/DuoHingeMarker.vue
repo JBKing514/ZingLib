@@ -50,13 +50,14 @@ function readFeed() {
   const content = overlay?.querySelector(".home-filter-content");
   const sheet = content?.querySelector(".home-filter-sheet");
   const sort = document.querySelector(".home-sort-overlay.v-overlay--active .home-sort-content");
+  const picker = document.querySelector(".longpress-picker-host");
   const menu = document.querySelector(".home-filter-tag-menu");
   const bounds = (el) => {
     if (!el || !el.getClientRects().length) return "-";
     const r = el.getBoundingClientRect();
     return `${Math.round(r.left)}..${Math.round(r.right)} y${Math.round(r.top)}..${Math.round(r.bottom)}`;
   };
-  dialogInfo.value = `filter ${bounds(content)} | sheet ${bounds(sheet)} | sort ${bounds(sort)} | menu ${bounds(menu)}`;
+  dialogInfo.value = `filter ${bounds(content)} | sheet ${bounds(sheet)} | sort ${bounds(sort)} | menu ${bounds(menu)} | picker ${bounds(picker)}`;
   // The reader is its own full-bleed stage; measure whichever is on screen.
   const stage = document.querySelector(".reader-stage");
   const main = document.querySelector(".v-main");

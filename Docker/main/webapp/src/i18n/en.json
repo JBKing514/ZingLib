@@ -863,7 +863,6 @@
   "theme.mode.light": "Light",
   "theme.mode.dark": "Dark",
   "topbar.settings.language": "Language",
-  "topbar.settings.zoom": "Page Zoom",
   "settings.text_ingest.prune": "Prune records missing from a full import",
   "settings.worker.only_missing": "Worker processes only missing items",
   "settings.text_ingest.batch": "Metadata import batch size",

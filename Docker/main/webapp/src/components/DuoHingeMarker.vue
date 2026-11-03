@@ -46,11 +46,19 @@ function readFeed() {
     const mr = main ? main.getBoundingClientRect() : null;
     const spread = document.querySelector(".paged-spread");
     const spr = spread ? spread.getBoundingClientRect() : null;
+    const shots = Array.from(document.querySelectorAll(".paged-spread .reader-image"))
+      .slice(0, 2)
+      .map((el, i) => {
+        const r = el.getBoundingClientRect();
+        return `${i}:${Math.round(r.left)}+${Math.round(r.width)}`;
+      })
+      .join(" ");
     const mc = main ? getComputedStyle(main) : null;
     debugInfo.value =
       `stage ${Math.round(sr.left)}+${Math.round(sr.width)} | main ${mr ? Math.round(mr.left) + "+" + Math.round(mr.width) : "-"}` +
       ` | spread ${spr ? Math.round(spr.left) + "+" + Math.round(spr.width) : "-"}` +
-      (mc ? ` | main.w=${mc.width} maxw=${mc.maxWidth} padL=${mc.paddingLeft} padR=${mc.paddingRight} cls=${main.className}` : "");
+      ` | imgs ${shots}` +
+      (mc ? ` | main.w=${mc.width}` : "");
     return;
   }
   const row = document.querySelector(".dashboard-page-shell .v-row");

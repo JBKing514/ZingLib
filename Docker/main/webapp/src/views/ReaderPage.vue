@@ -1526,6 +1526,8 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+
+
 .paged-spread.double .reader-image {
   width: 50%;
 }

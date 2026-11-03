@@ -39,6 +39,18 @@ export const DEFAULT_HINGE_CSS = 27;
 const STORAGE_KEY = "zinglib.duoMode";
 const DUO_MODEL = /surface\s*duo/i;
 
+
+/**
+ * Two panels at ~537 CSS px each plus the hinge is ~1100; anything narrower is
+ * a single screen and splitting it would eat a third of the viewport.
+ *
+ * It was dropped once during a rewrite and the reference below survived, which
+ * `vite build` cannot catch: an undefined identifier is a runtime ReferenceError,
+ * and because this runs in the shell's setup the whole app rendered blank after
+ * login while the login page (outside the shell) still worked.
+ */
+const MIN_DUAL_WIDTH = 900;
+
 const state = reactive({
   /** The layout is on. */
   active: false,

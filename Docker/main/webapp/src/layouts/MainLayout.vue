@@ -55,7 +55,7 @@
     <div
       v-if="!hideReaderChrome && ui.tab === 'dashboard' && dashboardStore.showScrollQuickActions"
       class="quick-fab-wrap"
-      :class="{ 'duo-fab-right': dualScreenActive && !dashboardStore.showMobilePreview }"
+      :class="{ 'duo-fab-right': dualScreenActive }"
       :style="dashboardStore.quickFabStyle"
     >
       <v-btn color="secondary" icon="mdi-magnify" size="large" class="quick-fab" @click="dashboardStore.quickSearchOpen = true" />
@@ -142,8 +142,19 @@ function onSidebarGoHome(homeTab) {
 <style scoped>
 /* The inline `left` from the store wins over a plain rule, so this has to be
    `!important`; `right` is what actually places it. */
+/* `left` is set inline by the store, so it takes `!important` to release it. */
 .duo-fab-right {
   left: auto !important;
   right: 24px !important;
+}
+
+/* While the detail card owns the right panel the stack would sit underneath it:
+   the scroll handler keeps re-showing it, so it flicks into view and is covered
+   again. The page publishes the open state on <html> -- `dashboardStore` has no
+   such flag, and reading a page-local computed from here silently returned
+   undefined, which is why the first attempt never moved. */
+:global(html.duo-preview-open) .duo-fab-right {
+  left: 24px !important;
+  right: auto !important;
 }
 </style>

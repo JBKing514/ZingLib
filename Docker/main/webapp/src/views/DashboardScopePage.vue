@@ -47,8 +47,8 @@
               </v-text-field>
 
                 <template v-if="!isMobile">
-                  <v-btn v-if="homeTab === 'local_gallery' && !isLocalFolderMode()" class="home-sort-btn" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
-                  <v-btn class="home-filter-btn" color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
+                  <v-btn v-if="showsLocalSort" class="home-sort-btn" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
+                  <v-btn class="home-filter-btn" :class="{ 'home-filter-wide': !showsLocalSort }" color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
                 </template>
               <div v-if="isMobile" class="mobile-action-row">
                 <v-btn
@@ -123,20 +123,6 @@
                   :label="t('home.local.private_mode')"
                   :title="t('home.local.private_mode_hint')"
                   @update:model-value="setPrivateMode($event)"
-                />
-                <!-- Only on a recognised dual-screen device (or once the user has
-                     chosen): elsewhere the switch would promise a layout this
-                     build cannot give. -->
-                <v-switch
-                  v-if="dualScreenAvailable"
-                  :model-value="dualScreenActive"
-                  density="compact"
-                  inset
-                  hide-details
-                  color="teal"
-                  :label="t('home.local.duo_mode')"
-                  :title="dualScreenTitle"
-                  @update:model-value="setDualScreenMode($event)"
                 />
               </div>
             </div>
@@ -885,14 +871,14 @@ export default {
   computed: {
     // Shown once the device is known to be a Duo, or once the user has made a
     // choice -- on a plain phone the switch would be noise that does nothing.
-    dualScreenAvailable() {
-      return Boolean(dualScreen.state.available);
+    // Sorting only exists for the local library in flat mode; on favourites and
+    // history the button is absent and the filter has to take the whole row,
+    // otherwise the grid keeps an empty cell where sort would have been.
+    showsLocalSort() {
+      return this.homeTab === "local_gallery" && !this.isLocalFolderMode();
     },
     dualScreenActive() {
       return Boolean(dualScreen.state.active);
-    },
-    dualScreenTitle() {
-      return `${this.t("home.local.duo_mode_hint")} (${dualScreen.state.reason})`;
     },
     // One offset per feed, not one per component: local library, favorites and
     // history each keep their own place. Folder mode is part of the identity
@@ -1128,6 +1114,13 @@ export default {
       }
     },
     showMobilePreview(next) {
+      // The shell (and anything else outside this page) needs to know that the
+      // right panel now belongs to the detail card; this page owns the state, so
+      // it publishes it as a document-level class rather than duplicating the
+      // derivation in every consumer.
+      if (typeof document !== "undefined") {
+        document.documentElement.classList.toggle("duo-preview-open", Boolean(next));
+      }
       if (next) {
         this.ensureLeftTabletPreviewRailMode();
       } else {
@@ -1175,11 +1168,6 @@ export default {
         maxWidth: "none",
         marginLeft: index % 4 === 2 ? `${gap}px` : null,
       };
-    },
-    setDualScreenMode(enabled) {
-      // An explicit flip replaces "auto": the user's choice outranks detection,
-      // and it is remembered so it survives a reload on the same device.
-      dualScreen.setMode(enabled ? "on" : "off");
     },
     // Uploading galleries lives in the toolbox file manager, not on the feed, so
     // the empty-library state has to hand the user the path to it -- otherwise
@@ -2865,6 +2853,10 @@ export default {
 
 .duo-header .home-filter-btn {
   grid-column: 2;
+}
+
+.duo-header .home-filter-wide {
+  grid-column: 1 / 3;
 }
 
 .duo-header .home-tab-row {

@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick">
-          <v-card class="pa-4 mb-4">
+          <v-card class="pa-4 mb-4" :class="{ 'duo-left-panel': dualScreenActive }">
             <div class="mb-3">
               <div class="d-flex align-center flex-wrap ga-2 home-search-row">
               <v-text-field
@@ -2798,6 +2798,15 @@ export default {
 
 .tag-suggest-chip {
   border: 1px solid rgba(148, 163, 184, 0.5);
+}
+
+/* Dual-screen: the search box and its sort/filter/view controls are chrome, so
+   they stay on the left panel while the feed itself spans both. The card sits
+   inside a container with 24px of padding on each side, hence the 48px: the
+   left edge is already inset, and the right edge needs the same gap so the seams
+   do not touch the hinge. */
+.duo-left-panel {
+  max-width: calc(var(--duo-left-width, 100%) - 48px);
 }
 
 /* Keeps the staged-tag strip from collapsing the dialog when it is empty. */

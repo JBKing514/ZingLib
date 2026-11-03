@@ -1,5 +1,5 @@
 <template>
-  <v-app-bar flat color="surface" :class="{ 'app-header': safeAreaTopInset, 'duo-left-only': dual.state.active }">
+  <v-app-bar flat color="surface" :class="{ 'app-header': safeAreaTopInset }">
     <v-app-bar-nav-icon @click="emit('toggle-drawer')" />
     <v-app-bar-title class="font-weight-bold">{{ t(currentTitleKey) }}</v-app-bar-title>
     <v-spacer />
@@ -81,11 +81,6 @@
 
 <script setup>
 import { useSettingsStore } from "../stores/settingsStore";
-import { useDualScreen } from "../composables/useDualScreen";
-
-// The bar is chrome: on a dual screen it belongs to the left panel, and the
-// right panel keeps its top edge empty.
-const dual = useDualScreen();
 
 defineProps({
   currentTitleKey: { type: String, required: true },
@@ -138,14 +133,6 @@ const handleCycleTheme = async () => {
 <style scoped>
 .app-header {
   background-color: #000000;
-}
-
-/* Dual-screen: keep every control on the left panel so the right panel's top
-   edge stays blank. Vuetify pins the bar with left:0 / right:0, so the right
-   edge has to be released before a width means anything. */
-.duo-left-only {
-  right: auto !important;
-  width: var(--duo-left-width, 100%) !important;
 }
 
 .notice-title {

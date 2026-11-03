@@ -953,6 +953,8 @@
   "settings.local_lib.maintenance.hint": "Acts directly on the local-library database; these operations cannot be undone.",
   "home.local.private_mode": "Private Mode",
   "home.local.private_mode_hint": "No history or bookmarks are written; the UI shifts tone to remind you",
+  "home.local.duo_mode": "Dual-screen layout",
+  "home.local.duo_mode_hint": "Split the layout across both panels and keep content off the hinge; enabled automatically on Surface Duo only",
   "home.local.private_mode_notice_title": "Private mode is on",
   "home.local.private_mode_notice_body": "This reading will not be added to history, and bookmarks will not be updated. The UI tone marks the state.",
   "home.local.private_mode_notice_action": "Turn off private mode",

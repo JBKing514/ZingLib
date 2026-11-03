@@ -953,6 +953,8 @@
   "settings.local_lib.maintenance.hint": "直接作用于本地库数据库，操作不可撤销。",
   "home.local.private_mode": "隐私模式",
   "home.local.private_mode_hint": "不写入历史与书签，界面整体变色提示",
+  "home.local.duo_mode": "双屏布局",
+  "home.local.duo_mode_hint": "按两块屏幕分栏并避开中间铰链；仅在 Surface Duo 上自动开启",
   "home.local.private_mode_notice_title": "隐私模式已启用",
   "home.local.private_mode_notice_body": "本次阅读不会写入历史记录，也不会更新书签。界面已变色提示。",
   "home.local.private_mode_notice_action": "关闭隐私模式",

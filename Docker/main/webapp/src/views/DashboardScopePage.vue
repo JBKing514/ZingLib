@@ -118,6 +118,20 @@
                   :title="t('home.local.private_mode_hint')"
                   @update:model-value="setPrivateMode($event)"
                 />
+                <!-- Only on a recognised dual-screen device (or once the user has
+                     chosen): elsewhere the switch would promise a layout this
+                     build cannot give. -->
+                <v-switch
+                  v-if="dualScreenAvailable"
+                  :model-value="dualScreenActive"
+                  density="compact"
+                  inset
+                  hide-details
+                  color="teal"
+                  :label="t('home.local.duo_mode')"
+                  :title="dualScreenTitle"
+                  @update:model-value="setDualScreenMode($event)"
+                />
               </div>
             </div>
           </v-card>
@@ -706,6 +720,7 @@ import { useLayoutStore } from "../stores/layoutStore";
 import { useReaderQueueStore } from "../stores/readerQueueStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useToastStore } from "../stores/useToastStore";
+import { useDualScreen } from "../composables/useDualScreen";
 import PreviewCard from "../components/dashboard/PreviewCard.vue";
 import TagExploreOverlay from "../components/dashboard/TagExploreOverlay.vue";
 import FeedPager from "../components/dashboard/FeedPager.vue";
@@ -769,6 +784,10 @@ const SHELL_CLICK_KEEPS_PREVIEW = [
 // so the touch that opened it has not ended yet; without this window that same
 // touchend commits the selection and the picker is gone the moment it appears.
 const LONG_PRESS_OPEN_GRACE_MS = 260;
+
+// Shared singleton: the shell already owns the probe, this page only reads the
+// result and offers the switch. Calling the composable again is free.
+const dualScreen = useDualScreen();
 
 export default {
   name: "DashboardScopePage",
@@ -857,6 +876,17 @@ export default {
     };
   },
   computed: {
+    // Shown once the device is known to be a Duo, or once the user has made a
+    // choice -- on a plain phone the switch would be noise that does nothing.
+    dualScreenAvailable() {
+      return Boolean(dualScreen.state.available);
+    },
+    dualScreenActive() {
+      return Boolean(dualScreen.state.active);
+    },
+    dualScreenTitle() {
+      return `${this.t("home.local.duo_mode_hint")} (${dualScreen.state.reason})`;
+    },
     // One offset per feed, not one per component: local library, favorites and
     // history each keep their own place. Folder mode is part of the identity
     // because entering a folder is a different feed with different rows.
@@ -1108,6 +1138,11 @@ export default {
     },
   },
   methods: {
+    setDualScreenMode(enabled) {
+      // An explicit flip replaces "auto": the user's choice outranks detection,
+      // and it is remembered so it survives a reload on the same device.
+      dualScreen.setMode(enabled ? "on" : "off");
+    },
     // Uploading galleries lives in the toolbox file manager, not on the feed, so
     // the empty-library state has to hand the user the path to it -- otherwise
     // "your library is empty" is a dead end for someone who skipped the setup

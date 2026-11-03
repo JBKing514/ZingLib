@@ -2523,6 +2523,15 @@ export default {
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
   user-select: none;
+  /* feat-5: a 1000-item feed put ~115k nodes in the DOM and every one of them in
+     the layout/paint path, which is where the scroll stutter came from. Skipping
+     layout and paint for cards outside the viewport is the cheapest way to take
+     that back. `auto` in `contain-intrinsic-size` makes the browser remember a
+     card's real height after it has been rendered once, so the scrollbar and the
+     saved scroll position do not drift as cards re-enter. 301px is the measured
+     four-up card pitch, used only for cards that have never been painted. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 301px;
 }
 
 /* While the finger is down waiting for the 430ms timer, nothing in the card may

@@ -14,15 +14,45 @@
     />
     <div class="duo-marker__label">
       {{ label }}
+      <template v-if="debugOn">
+        <br />
+        {{ debugInfo }}
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useDualScreen } from "../composables/useDualScreen";
 
 const dual = useDualScreen();
+
+// `?duo_debug=1` prints what the browser actually computed for the feed grid.
+// Reading pixels off a screenshot has cost more time than this will.
+const debugInfo = ref("");
+// Tied to `?duo=1` because the router rewrites the URL and drops unknown
+// parameters, while `duo` survives -- it is read by the composable too.
+const debugOn = typeof window !== "undefined"
+  && new URLSearchParams(window.location.search).get("duo") === "1";
+
+function readFeed() {
+  if (!debugOn) return;
+  const row = document.querySelector(".dashboard-page-shell .v-row");
+  if (!row) { debugInfo.value = "no feed row"; return; }
+  const cs = getComputedStyle(row);
+  const cells = Array.from(row.children).slice(0, 6).map((el, i) => {
+    const r = el.getBoundingClientRect();
+    return `${i}:${Math.round(r.left)}+${Math.round(r.width)}`;
+  });
+  debugInfo.value = `row ${Math.round(row.getBoundingClientRect().width)} cols=${cs.gridTemplateColumns || "-"} | ${cells.join(" ")}`;
+}
+
+onMounted(() => {
+  if (!debugOn) return;
+  setTimeout(readFeed, 1600);
+  setTimeout(readFeed, 3200);
+});
 
 const label = computed(() => {
   const s = dual.state;

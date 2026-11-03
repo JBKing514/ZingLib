@@ -971,6 +971,11 @@ export default {
     }
     this.applyRouteScopedTab();
     this.ensureScopeTab();
+    // The watcher only fires on a change. Landing on a URL that already has
+    // `pv=` opens the detail without ever changing the value, so the class the
+    // shell reads would never be set and the quick actions stayed on the right
+    // panel -- exactly the "flickers on scroll, then covered" report.
+    this.syncPreviewOpenClass(this.showMobilePreview);
     this.applyReaderOriginRestore();
     this.syncMobilePreviewFromRoute();
     this.ensureLeftTabletPreviewRailMode();
@@ -993,6 +998,7 @@ export default {
     window.addEventListener("pointerdown", this.onPointerDownCapture, { passive: true });
   },
   activated() {
+    this.syncPreviewOpenClass(this.showMobilePreview);
     // Coming back from the toolbox or the settings page. `<KeepAlive>` kept the
     // feed rows, but the app shares one window scroller, so the detour to a
     // shorter page clamped the offset to zero -- put the user back.
@@ -1114,13 +1120,7 @@ export default {
       }
     },
     showMobilePreview(next) {
-      // The shell (and anything else outside this page) needs to know that the
-      // right panel now belongs to the detail card; this page owns the state, so
-      // it publishes it as a document-level class rather than duplicating the
-      // derivation in every consumer.
-      if (typeof document !== "undefined") {
-        document.documentElement.classList.toggle("duo-preview-open", Boolean(next));
-      }
+      this.syncPreviewOpenClass(next);
       if (next) {
         this.ensureLeftTabletPreviewRailMode();
       } else {
@@ -1139,6 +1139,15 @@ export default {
     },
   },
   methods: {
+    /* The shell (and anything outside this page) needs to know that the right
+       panel now belongs to the detail card. This page owns the state, so it
+       publishes it as a document-level class instead of every consumer
+       re-deriving it -- and re-publishes on activate, because a cached page
+       keeps its flag while another route has been showing. */
+    syncPreviewOpenClass(open) {
+      if (typeof document === "undefined") return;
+      document.documentElement.classList.toggle("duo-preview-open", Boolean(open));
+    },
     /* Four cards per row across a dual screen: two on each panel, with the
        physical hinge held open between the second and the third.
 
@@ -1159,13 +1168,20 @@ export default {
       // across inside the left one (the row narrows via `.duo-feed-left`).
       if (this.showMobilePreview) {
         return {
-          flex: "0 0 calc((100% - 12px) / 2 - 0.01px)",
+          flex: "0 0 calc((100% - 12px) / 2 - 0.02px)",
           maxWidth: "none",
+          minWidth: "0px",
         };
       }
       return {
-        flex: `0 0 calc((100% - ${gap}px) / 4 - 0.01px)`,
+        flex: `0 0 calc((100% - ${gap}px) / 4 - 0.02px)`,
         maxWidth: "none",
+        // `min-width: 0` is what makes the four-up arithmetic hold. Without it a
+        // flex item refuses to shrink below its content, and the history feed
+        // proves it: its subtitle ("Local - 2026/11/03 14:18 - action - 8P") is
+        // long enough to force one cell 9px wider, which pushed the fourth card
+        // onto the next row and staggered everything after it.
+        minWidth: "0px",
         marginLeft: index % 4 === 2 ? `${gap}px` : null,
       };
     },

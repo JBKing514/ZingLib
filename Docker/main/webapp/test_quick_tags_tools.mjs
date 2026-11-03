@@ -18,6 +18,7 @@ function quickDialog(api = async () => ({ items: [] })) {
     ...namespaces, PreviewCard: {}, TagExploreOverlay: {}, FeedPager: {}, FeedPullToPage: {},
     // The progress capsule joined `components` in round 62.
     CardProgressBadge: {},
+    FeedCoverImage: {},
     useSettingsStore: () => ({ customNamespaceDefs: [{ key: "my-space", color: "#123456" }] }),
     getHomeTagSuggest: api,
     batchUpdateLocalMeta: async payload => saved.push(payload),

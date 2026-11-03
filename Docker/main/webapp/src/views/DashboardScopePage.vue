@@ -158,7 +158,7 @@
             class="mb-2"
             lines="two"
           >
-            <v-list-item v-for="item in filteredHomeItems" :key="item.id" @click="openHomeItem(item)">
+            <v-list-item v-for="item in filteredHomeItems" :key="item.id" :ref="(el) => registerFeedCard(el, item)" @click="openHomeItem(item)">
               <template #title>
                 <span v-if="item.source !== 'folder'" class="cover-link-title">{{ getGalleryTitle(item) }}</span>
                 <span v-else class="cover-link-title">{{ getGalleryTitle(item) }}</span>
@@ -186,7 +186,7 @@
                     <v-icon size="20" color="amber">mdi-folder-outline</v-icon>
                   </template>
                   <template v-else>
-                    <img v-if="item.thumb_url" :src="item.thumb_url" alt="cover" class="cover-img list-cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onImageLoaded(item)" @error="onImageError(item)" />
+                    <FeedCoverImage v-if="item.thumb_url" :item="item" :cover-key="previewItemKey(item)" :deferred-keys="feedDeferredKeys" alt="cover" class="cover-img list-cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onFeedImageLoaded(item, $event)" @error="onFeedImageError(item, $event)" />
                     <v-icon v-else size="18">mdi-image-outline</v-icon>
                   </template>
                 </div>
@@ -234,7 +234,7 @@
                       <v-icon size="40" color="amber">mdi-folder-multiple-image</v-icon>
                     </template>
                     <template v-else>
-                      <img v-if="item.thumb_url" :src="feedThumbSrc(item)" alt="cover" class="cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onImageLoaded(item)" @error="onImageError(item)" />
+                      <FeedCoverImage v-if="item.thumb_url" :item="item" :cover-key="previewItemKey(item)" :deferred-keys="feedDeferredKeys" alt="cover" class="cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onFeedImageLoaded(item, $event)" @error="onFeedImageError(item, $event)" />
                       <v-icon v-else size="30">mdi-image-outline</v-icon>
                     </template>
                     <div class="cover-guard" @contextmenu.prevent />
@@ -741,11 +741,8 @@ import { getCategoryLabel } from "../utils/categoryPresets";
 import { mergeMetaEditIntoItem } from "../utils/metaEditMerge";
 import { galleryPickerLayout } from "../utils/galleryPickerLayout";
 
-// A 1x1 transparent GIF: what a released cover points at. Keeping an `<img>`
-// with a src (rather than removing it) preserves the element's box, so releasing
-// a cover can never change the card's height or the scroll position.
-const FEED_THUMB_PLACEHOLDER =
-  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+import { createFeedCoverWindow, FEED_THUMB_PLACEHOLDER } from "../utils/feedCoverWindow";
+import FeedCoverImage from "../components/FeedCoverImage.vue";
 
 // What a tap on the page is allowed to mean instead of "put the tablet preview
 // away". Galleries stay galleries, controls stay controls, and a panel that
@@ -791,9 +788,10 @@ export default {
   props: {
     scope: { type: String, default: "local" },
   },
-  components: { PreviewCard, TagExploreOverlay, FeedPager, FeedPullToPage, CardProgressBadge },
+  components: { PreviewCard, TagExploreOverlay, FeedPager, FeedPullToPage, CardProgressBadge, FeedCoverImage },
   data() {
     return {
+      feedDeferredKeys: new Set(),
       _autoRefreshTimer: null,
       _syncingRouteTab: false,
       deleteDialogOpen: false,
@@ -1004,6 +1002,7 @@ export default {
     window.addEventListener("pointerdown", this.onPointerDownCapture, { passive: true });
   },
   activated() {
+    this._feedCoverWindow?.resume();
     // Coming back from the toolbox or the settings page. `<KeepAlive>` kept the
     // feed rows, but the app shares one window scroller, so the detour to a
     // shorter page clamped the offset to zero -- put the user back.
@@ -1023,6 +1022,7 @@ export default {
     });
   },
   deactivated() {
+    this._feedCoverWindow?.pause();
     // Leaving. This is the only reliable "last chance" write: the destination
     // page mounts before the browser reflows, so by the time a route guard could
     // read scrollY it is already the new page's.
@@ -1035,10 +1035,8 @@ export default {
   },
   beforeUnmount() {
     this.closeLongPressPicker(true);
-    if (this._feedImgObserver) {
-      this._feedImgObserver.disconnect();
-      this._feedImgObserver = null;
-    }
+    this._feedCoverWindow?.dispose();
+    this._feedCoverWindow = null;
     this._saveFeedScroll();
     if (this._autoRefreshTimer) {
       clearInterval(this._autoRefreshTimer);
@@ -1147,52 +1145,28 @@ export default {
     },
   },
   methods: {
-    /* Only the covers near the viewport keep their bytes.
-     *
-     * `loading="lazy"` defers the download but not the decode: once a thumbnail
-     * has been painted the decoded bitmap stays resident for the life of the
-     * element. A 1000-item feed therefore held ~850 decoded covers and grew to
-     * ~600MB of JS heap (measured), which is what makes a tablet start to feel
-     * heavy even after layout work was taken off the table.
-     *
-     * Cards more than a screen and a half outside the viewport drop their `src`
-     * and get it back when they return. The URL never changes, so the browser
-     * serves the return from cache; the cost is one repaint, not a refetch. */
-    feedThumbSrc(item) {
-      if (!item) return "";
-      return item._thumbDeferred ? FEED_THUMB_PLACEHOLDER : String(item.thumb_url || "");
-    },
+    // Detach distant cover sources so the browser can reclaim image resources.
+    // Restoring the same URL allows cache reuse; actual residency is browser-managed.
     registerFeedCard(el, item) {
-      // `v-card` is a component, so the ref is its instance; the observer needs
-      // the element.
       const node = el && el.$el ? el.$el : el;
-      if (!node || node.nodeType !== 1) return;
-      node.__feedItem = item;
-      if (!this._feedImgObserver) {
-        this._feedImgObserver = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) {
-              const target = entry.target;
-              const it = target.__feedItem;
-              if (!it) continue;
-              // Entering restores immediately; leaving waits a beat so a fast
-              // scroll back and forth does not thrash the decode.
-              if (entry.isIntersecting) {
-                it._thumbDeferred = false;
-              } else if (!it._thumbDeferred) {
-                setTimeout(() => {
-                  if (!target.isConnected) return;
-                  const stillFar = target.getBoundingClientRect().bottom < -600
-                    || target.getBoundingClientRect().top > window.innerHeight + 600;
-                  if (stillFar) it._thumbDeferred = true;
-                }, 400);
-              }
-            }
+      if (!this._feedCoverWindow && node) {
+        this._feedCoverWindow = createFeedCoverWindow({
+          // Feed rows are markRaw; track only source visibility, not all metadata.
+          onDeferredChange: (key, deferred) => {
+            if (deferred) this.feedDeferredKeys.add(key);
+            else this.feedDeferredKeys.delete(key);
           },
-          { rootMargin: "1200px 0px" }
-        );
+        });
       }
-      this._feedImgObserver.observe(node);
+      this._feedCoverWindow?.register(this.previewItemKey(item), node, item);
+    },
+    onFeedImageLoaded(item, event) {
+      if (item?._thumbDeferred || event?.target?.getAttribute("src") === FEED_THUMB_PLACEHOLDER) return;
+      if (item?._is_retrying || Number(item?._retries) > 0) this.onImageLoaded(item);
+    },
+    onFeedImageError(item, event) {
+      if (item?._thumbDeferred || event?.target?.getAttribute("src") === FEED_THUMB_PLACEHOLDER) return;
+      this.onImageError(item);
     },
     /* Four cards per row across a dual screen: two on each panel, with the
        physical hinge held open between the second and the third.

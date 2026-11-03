@@ -18,6 +18,9 @@ versions follow Semantic Versioning:
 - Long-press gallery pickers keep all galleries from the current row and open within the screen where the press began, keeping selection controls clear of the hinge.
 - Reader page turns are buffered: the visible page only changes once the target has decoded, a burst of turns commits only its last target, spreads commit as a pair, and the swap cross-fades so the previous page stays on screen instead of leaving a gap.
 - Removed application-level page zoom and its gesture coordinate compensation. Existing saved zoom preferences are ignored; browser zoom and device DPI control overall scaling.
+- Long feeds skip offscreen card layout/paint and detach distant cover sources in grid and list views. Cover releases are batched, canceled on re-entry, and cleaned up when rows or KeepAlive pages leave. Image children track visibility independently of raw metadata and the full grid; placeholder loads no longer reset real-image retries, and ordinary successful loads avoid retry-state writes.
+- XP feeds continue into unranked database galleries, including when the recommendation ranking ends on an exact page boundary.
+- Resetting a feed during an append now supersedes that request and reloads page one, instead of dropping the reset and losing the first page.
 
 ## [1.1.5] - 2026-10-25
 

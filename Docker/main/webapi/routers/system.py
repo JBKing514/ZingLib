@@ -422,7 +422,8 @@ def home_local(
             # not dead-end while galleries are still on disk.
             tail_served = 0
             tail_more = False
-            if len(items) < int(limit):
+            # Even a full final ranking page needs one tail row of lookahead.
+            if end >= len(all_items):
                 ranked_arcids = [str(it.get("arcid") or "").strip() for it in all_items]
                 tail_need = int(limit) - len(items)
                 tail_rows = _local_feed_tail_rows(

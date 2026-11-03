@@ -50,7 +50,14 @@
 
     <duo-hinge-marker />
 
-    <div v-if="!hideReaderChrome && ui.tab === 'dashboard' && dashboardStore.showScrollQuickActions" class="quick-fab-wrap" :style="dashboardStore.quickFabStyle">
+    <!-- On a dual screen the stack moves to the bottom of the right panel: the
+         left one is where the reader taps, and the quick actions are chrome. -->
+    <div
+      v-if="!hideReaderChrome && ui.tab === 'dashboard' && dashboardStore.showScrollQuickActions"
+      class="quick-fab-wrap"
+      :class="{ 'duo-fab-right': dualScreenActive && !dashboardStore.showMobilePreview }"
+      :style="dashboardStore.quickFabStyle"
+    >
       <v-btn color="secondary" icon="mdi-magnify" size="large" class="quick-fab" @click="dashboardStore.quickSearchOpen = true" />
       <v-btn color="info" icon="mdi-filter-variant" size="large" class="quick-fab" @click="dashboardStore.homeFiltersOpen = true" />
       <v-btn
@@ -93,6 +100,9 @@ const hideReaderChrome = computed(() => {
 
 const dashboardTab = computed(() => String(dashboardStore.homeTab || "local_gallery"));
 
+const { state: dualState } = useDualScreen();
+const dualScreenActive = computed(() => Boolean(dualState.active));
+
 // Owned by the shell so every page sees the same geometry, including the ones
 // that never mount the marker. It also sets the `--duo-*` custom properties that
 // the layout reads.
@@ -128,3 +138,12 @@ function onSidebarGoHome(homeTab) {
 }
 
 </script>
+
+<style scoped>
+/* The inline `left` from the store wins over a plain rule, so this has to be
+   `!important`; `right` is what actually places it. */
+.duo-fab-right {
+  left: auto !important;
+  right: 24px !important;
+}
+</style>

@@ -713,3 +713,29 @@ canvas {
     transition: flex-basis 220ms ease, max-width 220ms ease;
   }
 }
+
+/* Dual-screen: a dialog is centred in the viewport, which puts its middle right
+   on the hinge -- the filter sheet was cut in half by it. Left-aligning inside
+   the overlay's flex container moves it into the left panel without touching
+   `transform`, which Vuetify's own transitions animate; overriding that would
+   break the open/close motion. Menus are deliberately excluded: they belong to
+   the control that opened them and must follow their anchor. */
+html.duo-active .v-dialog,
+html.duo-active .v-overlay.v-dialog .v-overlay__content {
+  max-width: calc(var(--duo-left-width, 100vw) - 32px) !important;
+  margin-left: 16px !important;
+  margin-right: auto !important;
+}
+
+/* Dual-screen: a dialog is centred in the viewport, which puts its middle right
+   on the hinge -- the filter sheet was cut in half by it. Left-aligning inside
+   the overlay's flex container moves it into the left panel without touching
+   `transform`, which Vuetify's own transitions animate; overriding that would
+   break the open/close motion. Menus are deliberately excluded: they belong to
+   the control that opened them and must follow their anchor. */
+html.duo-active .v-dialog,
+html.duo-active .v-overlay.v-dialog .v-overlay__content {
+  max-width: calc(var(--duo-left-width, 100vw) - 32px) !important;
+  margin-left: 16px !important;
+  margin-right: auto !important;
+}

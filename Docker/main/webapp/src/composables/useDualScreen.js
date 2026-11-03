@@ -153,9 +153,17 @@ function apply() {
 
   let active = false;
   let reason = "";
+  // A window narrower than two panels cannot be split, whatever the preference
+  // says: the "on" switch is a decision about how to use a dual screen, not a
+  // licence to squeeze the layout into one. Seen on the device when the browser
+  // dropped out of spanning -- the header collapsed into a strip.
+  const tooNarrow = viewport > 0 && viewport < MIN_DUAL_WIDTH;
+
   if (forced) {
     active = true;
     reason = "dev-query";
+  } else if (tooNarrow) {
+    reason = "too-narrow";
   } else if (state.mode === "off") {
     reason = "user-off";
   } else if (state.mode === "on") {

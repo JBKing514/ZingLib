@@ -1,6 +1,12 @@
 <template>
   <div class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick">
-          <v-card class="pa-4 mb-4" :class="{ 'duo-header': dualScreenActive }">
+          <!-- With the detail open the right panel belongs to the card, so the
+               header falls back to the ordinary single-panel arrangement inside
+               the left panel: crowded, but nothing is hidden behind the drawer. -->
+          <v-card
+            class="pa-4 mb-4"
+            :class="dualScreenActive && !showMobilePreview ? 'duo-header' : (dualScreenActive ? 'duo-left-band' : '')"
+          >
             <div class="mb-3">
               <div class="d-flex align-center flex-wrap ga-2 home-search-row">
               <v-text-field
@@ -211,7 +217,7 @@
             </v-list-item>
           </v-list>
 
-          <v-row v-else>
+          <v-row v-else :class="{ 'duo-feed-left': dualScreenActive && showMobilePreview }">
               <v-col
                v-for="(item, itemIndex) in filteredHomeItems"
                 :key="item.id"
@@ -275,7 +281,7 @@
           <!-- The bottom affordance is the one place the two presentation modes
                must not overlap: an appending feed offers "load more", a paged
                feed offers a page bar. Exactly one of them is ever rendered. -->
-          <div v-if="!feedPaged" class="d-flex justify-center py-2">
+          <div v-if="!feedPaged" class="d-flex justify-center py-2" :class="{ 'duo-left-band': dualScreenActive }">
             <v-btn
               v-if="!activeHomeState.loading"
               color="primary"
@@ -394,7 +400,7 @@
             <div
               v-if="showMobilePreview && resolvedMobilePreviewItem"
               class="mobile-preview-fullscreen"
-              :class="mobilePreviewPaneClass"
+              :class="[mobilePreviewPaneClass, { 'duo-detail-right': dualScreenActive }]"
               @touchstart.stop="onMobilePreviewTouchStart"
               @touchmove.stop="onMobilePreviewTouchMove"
               @touchend.stop="onMobilePreviewTouchEnd"
@@ -1156,6 +1162,14 @@ export default {
     feedCellStyle(index) {
       if (!this.dualScreenActive) return null;
       const gap = Number(dualScreen.state.gap) || 27;
+      // Detail open: the right panel belongs to the card, so the feed is two
+      // across inside the left one (the row narrows via `.duo-feed-left`).
+      if (this.showMobilePreview) {
+        return {
+          flex: "0 0 calc((100% - 12px) / 2 - 0.01px)",
+          maxWidth: "none",
+        };
+      }
       return {
         flex: `0 0 calc((100% - ${gap}px) / 4 - 0.01px)`,
         maxWidth: "none",
@@ -2856,13 +2870,40 @@ export default {
 .duo-header .home-tab-row {
   grid-column: 4 / 6;
   grid-row: 1;
-  justify-content: flex-start !important;
+  justify-content: flex-end !important;
 }
 
 .duo-header .duo-switch-row {
   grid-column: 4 / 6;
   grid-row: 2;
   margin-top: 0 !important;
+}
+
+/* The right panel mirrors the app bar: its controls hug the outer edge, so the
+   two halves read as one band rather than two left-aligned columns. */
+.duo-header .duo-switch-row > .d-flex {
+  justify-content: flex-end;
+}
+
+/* "Load more" is centred in the content width, which is the whole viewport, so
+   on a dual screen it lands in the middle of the hinge. Keeping it on the left
+   panel puts it under the cards it appends to. */
+.duo-left-band {
+  max-width: calc(var(--duo-left-width, 100%) - 48px);
+}
+
+/* The detail drawer already sits on the right edge; on a dual screen it is sized
+   to the right panel exactly, so it fills the second screen instead of leaving
+   a strip of feed visible beside it. */
+.duo-detail-right {
+  --tablet-preview-pane-width: var(--duo-right-width, 50%);
+}
+
+/* With the detail open the feed narrows to the left panel and reads two across,
+   which is what the layout promises: galleries on one screen, the card on the
+   other. */
+.duo-feed-left {
+  max-width: calc(var(--duo-left-width, 100%) - 48px);
 }
 
 /* Keeps the staged-tag strip from collapsing the dialog when it is empty. */

@@ -211,7 +211,7 @@
             </v-list-item>
           </v-list>
 
-          <v-row v-else ref="feedRowRef" :class="{ 'duo-feed-row': dualScreenActive }">
+          <v-row v-else>
               <v-col
                v-for="(item, itemIndex) in filteredHomeItems"
                 :key="item.id"
@@ -874,9 +874,6 @@ export default {
       _previewCloseSeq: 0,
       _longPressBodyPrevOverflow: "",
       _longPressAbortOpen: false,
-      // Measured widths of the two card panes on a dual screen; `ready` is false
-      // until the row has been measured at least once.
-      feedPaneMetrics: { ready: false, gap: 0, leftCard: 0, rightCard: 0 },
     };
   },
   computed: {
@@ -982,8 +979,6 @@ export default {
     }
     this.applyRouteScopedTab();
     this.ensureScopeTab();
-    this.measureFeedPanes();
-    window.addEventListener("resize", this.measureFeedPanes);
     this.applyReaderOriginRestore();
     this.syncMobilePreviewFromRoute();
     this.ensureLeftTabletPreviewRailMode();
@@ -1037,7 +1032,6 @@ export default {
   },
   beforeUnmount() {
     this.closeLongPressPicker(true);
-    window.removeEventListener("resize", this.measureFeedPanes);
     this._saveFeedScroll();
     if (this._autoRefreshTimer) {
       clearInterval(this._autoRefreshTimer);
@@ -1053,12 +1047,6 @@ export default {
     this.restoreLeftTabletPreviewRailMode(true);
   },
   watch: {
-    // The panes are measured from the real row rect, so a change of dual-screen
-    // state (or of the hinge width) invalidates them.
-    dualScreenActive() {
-      this.feedPaneMetrics = { ready: false, gap: 0, leftCard: 0, rightCard: 0 };
-      this.$nextTick(this.measureFeedPanes);
-    },
 
     // Mirror the picker's lifetime into the store so the shell's sidebar gesture
     // can stand down while the picker owns the pointer. Watching the open flag
@@ -1155,64 +1143,23 @@ export default {
     /* Four cards per row across a dual screen: two on each panel, with the
        physical hinge held open between the second and the third.
 
-       Widths are measured, not expressed as percentages. The hinge sits at the
-       middle of the *viewport*, but the card row starts to the right of the
-       sidebar, so an even four-way split of the row can never line up with it --
-       the seam lands wherever the sidebar happens to end. Measuring the row's
-       rect against the two panel edges is the only way to put the gap exactly
-       over the hinge and keep two cards on each panel.
+       An even split, because the hinge sits at the middle of the viewport and
+       the feed occupies the whole viewport -- the sidebar is an overlay and
+       takes no space away from the row. Four columns of (100% - hinge) / 4 plus
+       one hinge of margin add up to exactly 100%, so the row still wraps after
+       the fourth card, and `index % 4 === 2` puts the gap at the start of every
+       row rather than only the first.
 
-       Inline styles, because the class-based versions lost twice: `v-col` ships
-       `flex: 0 0 25%` / `max-width: 25%` and a scoped `:deep(.v-col)` selector
-       failed to beat them, as a grid and as flex alike. */
+       Inline styles, because the class-based versions lost: `v-col` carries
+       `flex: 0 0 25%` / `max-width: 25%`, and a scoped `:deep(.v-col)` rule
+       failed to beat them both as a grid and as flex. */
     feedCellStyle(index) {
       if (!this.dualScreenActive) return null;
-      const metrics = this.feedPaneMetrics;
-      if (!metrics || !metrics.ready) {
-        // First paint, before the row has been measured: keep the cards on the
-        // left panel rather than flashing a full-width row that then reflows.
-        const gap = Number(dualScreen.state.gap) || 27;
-        return {
-          flex: `0 0 calc((100% - ${gap}px) / 4 - 0.01px)`,
-          maxWidth: "none",
-          marginLeft: index % 4 === 2 ? `${gap}px` : null,
-        };
-      }
-      const onLeft = index % 4 < 2;
-      const width = onLeft ? metrics.leftCard : metrics.rightCard;
-      return {
-        flex: `0 0 ${width}px`,
-        maxWidth: "none",
-        // The gap belongs to the first card of the right panel, and to the
-        // first card of each row -- `index % 4 === 0` starts a new row, where
-        // the previous card was on the right panel.
-        marginLeft: !onLeft && index % 4 === 2 ? `${metrics.gap}px` : null,
-      };
-    },
-    /* Measure the card row against the two panel edges. Runs on mount, on
-       resize, and whenever the dual-screen state changes; the row is a plain
-       flex container so its rect is exactly the space the cards can use. */
-    measureFeedPanes() {
-      if (!this.dualScreenActive) {
-        this.feedPaneMetrics = { ready: false };
-        return;
-      }
-      const row = this.$refs.feedRowRef;
-      const el = row && (row.$el || row);
-      if (!el || typeof el.getBoundingClientRect !== "function") return;
-      const rect = el.getBoundingClientRect();
       const gap = Number(dualScreen.state.gap) || 27;
-      const hingeLeft = Number(dualScreen.state.leftWidth) || 0;
-      const hingeRight = hingeLeft + gap;
-      const gutter = 12;
-      const leftW = Math.max(0, Math.min(rect.right, hingeLeft) - rect.left);
-      const rightW = Math.max(0, rect.right - Math.max(rect.left, hingeRight));
-      const half = (pane) => Math.max(60, Math.floor((pane - gutter * 2) / 2));
-      this.feedPaneMetrics = {
-        ready: leftW > 120 && rightW > 120,
-        gap,
-        leftCard: half(leftW),
-        rightCard: half(rightW),
+      return {
+        flex: `0 0 calc((100% - ${gap}px) / 4 - 0.01px)`,
+        maxWidth: "none",
+        marginLeft: index % 4 === 2 ? `${gap}px` : null,
       };
     },
     setDualScreenMode(enabled) {

@@ -1,6 +1,12 @@
 <template>
   <div class="dashboard-page-shell" :class="dashboardPageShellClass" @click="onPageShellClick">
-          <v-card class="pa-4 mb-4">
+          <!-- With the detail open the right panel belongs to the card, so the
+               header falls back to the ordinary single-panel arrangement inside
+               the left panel: crowded, but nothing is hidden behind the drawer. -->
+          <v-card
+            class="pa-4 mb-4"
+            :class="dualScreenActive && !showMobilePreview ? 'duo-header' : (dualScreenActive ? 'duo-left-band' : '')"
+          >
             <div class="mb-3">
               <div class="d-flex align-center flex-wrap ga-2 home-search-row">
               <v-text-field
@@ -41,8 +47,8 @@
               </v-text-field>
 
                 <template v-if="!isMobile">
-                  <v-btn v-if="homeTab === 'local_gallery' && !isLocalFolderMode()" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
-                  <v-btn color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
+                  <v-btn v-if="showsLocalSort" class="home-sort-btn" color="secondary" variant="tonal" icon="mdi-sort" rounded="lg" @click="openLocalSortDialog" />
+                  <v-btn class="home-filter-btn" :class="{ 'home-filter-wide': !showsLocalSort }" color="primary" variant="tonal" icon="mdi-filter-variant" rounded="lg" @click="homeFiltersOpen = true" />
                 </template>
               <div v-if="isMobile" class="mobile-action-row">
                 <v-btn
@@ -97,7 +103,7 @@
                  change how the feed is presented/persisted, and neither needs
                  an explanatory sentence ("按目录结构浏览本地库" was removed --
                  the switch's own label already says it). -->
-            <div v-if="homeTab === 'local_gallery'" class="mt-2">
+            <div v-if="homeTab === 'local_gallery'" class="mt-2 duo-switch-row">
               <div class="d-flex align-center flex-wrap ga-4">
                 <v-switch
                   :model-value="isLocalFolderMode()"
@@ -152,7 +158,7 @@
             class="mb-2"
             lines="two"
           >
-            <v-list-item v-for="item in filteredHomeItems" :key="item.id" @click="openHomeItem(item)">
+            <v-list-item v-for="item in filteredHomeItems" :key="item.id" :ref="(el) => registerFeedCard(el, item)" @click="openHomeItem(item)">
               <template #title>
                 <span v-if="item.source !== 'folder'" class="cover-link-title">{{ getGalleryTitle(item) }}</span>
                 <span v-else class="cover-link-title">{{ getGalleryTitle(item) }}</span>
@@ -180,7 +186,7 @@
                     <v-icon size="20" color="amber">mdi-folder-outline</v-icon>
                   </template>
                   <template v-else>
-                    <img v-if="item.thumb_url" :src="item.thumb_url" alt="cover" class="cover-img list-cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onImageLoaded(item)" @error="onImageError(item)" />
+                    <FeedCoverImage v-if="item.thumb_url" :item="item" :cover-key="previewItemKey(item)" :deferred-keys="feedDeferredKeys" alt="cover" class="cover-img list-cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onFeedImageLoaded(item, $event)" @error="onFeedImageError(item, $event)" />
                     <v-icon v-else size="18">mdi-image-outline</v-icon>
                   </template>
                 </div>
@@ -197,7 +203,7 @@
             </v-list-item>
           </v-list>
 
-          <v-row v-else>
+          <v-row v-else :class="{ 'duo-feed-left': dualScreenActive && showMobilePreview }">
               <v-col
                v-for="(item, itemIndex) in filteredHomeItems"
                 :key="item.id"
@@ -205,8 +211,10 @@
                 :sm="homeViewMode === 'wide' ? 6 : 4"
                 :md="homeViewMode === 'wide' ? 4 : 3"
                 :lg="homeViewMode === 'wide' ? 3 : 2"
+                :style="feedCellStyle(itemIndex)"
               >
               <v-card
+                :ref="(el) => registerFeedCard(el, item)"
                 class="home-card"
                 :class="{ compact: homeViewMode === 'compact', 'card-pressing': cardPressingKey === previewItemKey(item) }"
                 variant="flat"
@@ -226,7 +234,7 @@
                       <v-icon size="40" color="amber">mdi-folder-multiple-image</v-icon>
                     </template>
                     <template v-else>
-                      <img v-if="item.thumb_url" :src="item.thumb_url" alt="cover" class="cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onImageLoaded(item)" @error="onImageError(item)" />
+                      <FeedCoverImage v-if="item.thumb_url" :item="item" :cover-key="previewItemKey(item)" :deferred-keys="feedDeferredKeys" alt="cover" class="cover-img" loading="lazy" draggable="false" @dragstart.prevent @load="onFeedImageLoaded(item, $event)" @error="onFeedImageError(item, $event)" />
                       <v-icon v-else size="30">mdi-image-outline</v-icon>
                     </template>
                     <div class="cover-guard" @contextmenu.prevent />
@@ -260,7 +268,7 @@
           <!-- The bottom affordance is the one place the two presentation modes
                must not overlap: an appending feed offers "load more", a paged
                feed offers a page bar. Exactly one of them is ever rendered. -->
-          <div v-if="!feedPaged" class="d-flex justify-center py-2">
+          <div v-if="!feedPaged" class="d-flex justify-center py-2" :class="{ 'duo-left-band': dualScreenActive }">
             <v-btn
               v-if="!activeHomeState.loading"
               color="primary"
@@ -379,7 +387,7 @@
             <div
               v-if="showMobilePreview && resolvedMobilePreviewItem"
               class="mobile-preview-fullscreen"
-              :class="mobilePreviewPaneClass"
+              :class="[mobilePreviewPaneClass, { 'duo-detail-right': dualScreenActive }]"
               @touchstart.stop="onMobilePreviewTouchStart"
               @touchmove.stop="onMobilePreviewTouchMove"
               @touchend.stop="onMobilePreviewTouchEnd"
@@ -541,8 +549,8 @@
             </v-card>
           </v-dialog>
 
-          <v-dialog v-model="homeFiltersOpen" max-width="680">
-            <v-card class="pa-4" variant="flat">
+          <v-dialog v-model="homeFiltersOpen" class="home-filter-overlay" content-class="home-filter-content" max-width="680" :z-index="3200">
+            <v-card class="pa-4 home-filter-sheet" variant="flat">
               <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('home.filter.title') }}</div>
               <div class="text-caption text-medium-emphasis mb-3">{{ t('home.filter.hint') }}</div>
 
@@ -554,17 +562,12 @@
                 </div>
               </div>
 
-              <div
-                class="mb-4"
-                :class="{ 'mobile-category-grid': isMobile }"
-                :style="{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, max-content)' : 'repeat(5, 1fr)', gap: isMobile ? '6px' : '8px' }"
-              >
+              <div class="mb-4 home-filter-categories">
                 <v-btn
                   v-for="cat in pinnedHomeFilterCategoryDefs"
                   :key="`f-${cat.key}`"
                   class="category-btn text-caption font-weight-bold"
-                  :class="{ 'mobile-category-btn': isMobile }"
-                  :height="isMobile ? 40 : 32"
+                  height="32"
                   rounded="lg"
                   variant="flat"
                   :style="homeFilterCategoryStyle(cat.key, cat.color)"
@@ -578,6 +581,7 @@
                 v-model="homeFilters.tags"
                 v-model:search="filterTagInput"
                 :items="filterTagSuggestions"
+                :menu-props="{ contentClass: 'home-filter-tag-menu' }"
                 multiple
                 chips
                 closable-chips
@@ -675,7 +679,7 @@
             @quick-add-tag="openQuickTagDialog"
           />
 
-          <v-dialog v-model="localSortOpen" max-width="520">
+          <v-dialog v-model="localSortOpen" class="home-sort-overlay" content-class="home-sort-content" max-width="520" :z-index="3200">
             <v-card class="pa-4" variant="flat">
               <div class="text-subtitle-1 font-weight-medium mb-3">{{ t('home.local.sort.title') }}</div>
               <v-radio-group v-model="localSortBy" color="primary" hide-details>
@@ -706,6 +710,7 @@ import { useLayoutStore } from "../stores/layoutStore";
 import { useReaderQueueStore } from "../stores/readerQueueStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useToastStore } from "../stores/useToastStore";
+import { useDualScreen } from "../composables/useDualScreen";
 import PreviewCard from "../components/dashboard/PreviewCard.vue";
 import TagExploreOverlay from "../components/dashboard/TagExploreOverlay.vue";
 import FeedPager from "../components/dashboard/FeedPager.vue";
@@ -734,6 +739,10 @@ import {
 } from "../utils/tagNamespaces";
 import { getCategoryLabel } from "../utils/categoryPresets";
 import { mergeMetaEditIntoItem } from "../utils/metaEditMerge";
+import { galleryPickerLayout } from "../utils/galleryPickerLayout";
+
+import { createFeedCoverWindow, FEED_THUMB_PLACEHOLDER } from "../utils/feedCoverWindow";
+import FeedCoverImage from "../components/FeedCoverImage.vue";
 
 // What a tap on the page is allowed to mean instead of "put the tablet preview
 // away". Galleries stay galleries, controls stay controls, and a panel that
@@ -770,14 +779,19 @@ const SHELL_CLICK_KEEPS_PREVIEW = [
 // touchend commits the selection and the picker is gone the moment it appears.
 const LONG_PRESS_OPEN_GRACE_MS = 260;
 
+// Shared singleton: the shell already owns the probe, this page only reads the
+// result and offers the switch. Calling the composable again is free.
+const dualScreen = useDualScreen();
+
 export default {
   name: "DashboardScopePage",
   props: {
     scope: { type: String, default: "local" },
   },
-  components: { PreviewCard, TagExploreOverlay, FeedPager, FeedPullToPage, CardProgressBadge },
+  components: { PreviewCard, TagExploreOverlay, FeedPager, FeedPullToPage, CardProgressBadge, FeedCoverImage },
   data() {
     return {
+      feedDeferredKeys: new Set(),
       _autoRefreshTimer: null,
       _syncingRouteTab: false,
       deleteDialogOpen: false,
@@ -822,6 +836,7 @@ export default {
       longPressPickerOpen: false,
       longPressPickerItems: [],
       longPressPickerIndex: 0,
+      longPressPickerLayout: null,
       _longPressTimer: null,
       _longPressActive: false,
       _longPressStartX: 0,
@@ -857,6 +872,17 @@ export default {
     };
   },
   computed: {
+    // Shown once the device is known to be a Duo, or once the user has made a
+    // choice -- on a plain phone the switch would be noise that does nothing.
+    // Sorting only exists for the local library in flat mode; on favourites and
+    // history the button is absent and the filter has to take the whole row,
+    // otherwise the grid keeps an empty cell where sort would have been.
+    showsLocalSort() {
+      return this.homeTab === "local_gallery" && !this.isLocalFolderMode();
+    },
+    dualScreenActive() {
+      return Boolean(dualScreen.state.active);
+    },
     // One offset per feed, not one per component: local library, favorites and
     // history each keep their own place. Folder mode is part of the identity
     // because entering a folder is a different feed with different rows.
@@ -905,6 +931,7 @@ export default {
       };
     },
     longPressPickerStyle() {
+      const panel = this.longPressPickerLayout?.panel;
       const y = Number(this._longPressAnchorY || 0);
       if (!Number.isFinite(y) || y <= 0) return {};
       const vh = Number(this.viewportWidth || (typeof window !== "undefined" ? window.innerWidth : 0) || 0) > 0
@@ -912,7 +939,10 @@ export default {
         : 0;
       const cardH = 210;
       const top = Math.max(16, Math.min(Math.max(16, vh - cardH - 16), Math.round(y - cardH * 0.55)));
-      return { top: `${top}px` };
+      return {
+        top: `${top}px`,
+        ...(panel ? { left: `${panel.left}px`, right: "auto", width: `${panel.width}px`, paddingInline: "12px", boxSizing: "border-box" } : {}),
+      };
     },
     longPressCardStyle() {
       const n = Math.max(1, Number((this.longPressPickerItems || []).length || 1));
@@ -920,7 +950,9 @@ export default {
       const gap = 5;
       const sidePad = 16;
       const target = n * item + (n - 1) * gap + sidePad;
-      return { width: `min(92vw, ${Math.round(target)}px)` };
+      return this.longPressPickerLayout?.panel
+        ? { width: `min(100%, ${Math.round(target)}px)`, maxWidth: "100%" }
+        : { width: `min(92vw, ${Math.round(target)}px)` };
     },
     showMobilePreview() {
       return this.useRoutePreview && !!String(this.$route?.query?.pv || "").trim();
@@ -970,6 +1002,7 @@ export default {
     window.addEventListener("pointerdown", this.onPointerDownCapture, { passive: true });
   },
   activated() {
+    this._feedCoverWindow?.resume();
     // Coming back from the toolbox or the settings page. `<KeepAlive>` kept the
     // feed rows, but the app shares one window scroller, so the detour to a
     // shorter page clamped the offset to zero -- put the user back.
@@ -989,6 +1022,7 @@ export default {
     });
   },
   deactivated() {
+    this._feedCoverWindow?.pause();
     // Leaving. This is the only reliable "last chance" write: the destination
     // page mounts before the browser reflows, so by the time a route guard could
     // read scrollY it is already the new page's.
@@ -1001,6 +1035,8 @@ export default {
   },
   beforeUnmount() {
     this.closeLongPressPicker(true);
+    this._feedCoverWindow?.dispose();
+    this._feedCoverWindow = null;
     this._saveFeedScroll();
     if (this._autoRefreshTimer) {
       clearInterval(this._autoRefreshTimer);
@@ -1016,6 +1052,7 @@ export default {
     this.restoreLeftTabletPreviewRailMode(true);
   },
   watch: {
+
     // Mirror the picker's lifetime into the store so the shell's sidebar gesture
     // can stand down while the picker owns the pointer. Watching the open flag
     // (rather than setting the store in each of the four close paths) keeps the
@@ -1108,6 +1145,66 @@ export default {
     },
   },
   methods: {
+    // Detach distant cover sources so the browser can reclaim image resources.
+    // Restoring the same URL allows cache reuse; actual residency is browser-managed.
+    registerFeedCard(el, item) {
+      const node = el && el.$el ? el.$el : el;
+      if (!this._feedCoverWindow && node) {
+        this._feedCoverWindow = createFeedCoverWindow({
+          // Feed rows are markRaw; track only source visibility, not all metadata.
+          onDeferredChange: (key, deferred) => {
+            if (deferred) this.feedDeferredKeys.add(key);
+            else this.feedDeferredKeys.delete(key);
+          },
+        });
+      }
+      this._feedCoverWindow?.register(this.previewItemKey(item), node, item);
+    },
+    onFeedImageLoaded(item, event) {
+      if (item?._thumbDeferred || event?.target?.getAttribute("src") === FEED_THUMB_PLACEHOLDER) return;
+      if (item?._is_retrying || Number(item?._retries) > 0) this.onImageLoaded(item);
+    },
+    onFeedImageError(item, event) {
+      if (item?._thumbDeferred || event?.target?.getAttribute("src") === FEED_THUMB_PLACEHOLDER) return;
+      this.onImageError(item);
+    },
+    /* Four cards per row across a dual screen: two on each panel, with the
+       physical hinge held open between the second and the third.
+
+       An even split, because the hinge sits at the middle of the viewport and
+       the feed occupies the whole viewport -- the sidebar is an overlay and
+       takes no space away from the row. Four columns of (100% - hinge) / 4 plus
+       one hinge of margin add up to exactly 100%, so the row still wraps after
+       the fourth card, and `index % 4 === 2` puts the gap at the start of every
+       row rather than only the first.
+
+       Inline styles, because the class-based versions lost: `v-col` carries
+       `flex: 0 0 25%` / `max-width: 25%`, and a scoped `:deep(.v-col)` rule
+       failed to beat them both as a grid and as flex. */
+    feedCellStyle(index) {
+      if (!this.dualScreenActive) return null;
+      const gap = Number(dualScreen.state.gap) || 27;
+      // Detail open: the right panel belongs to the card, so the feed is two
+      // across inside the left one (the row narrows via `.duo-feed-left`).
+      if (this.showMobilePreview) {
+        return {
+          flex: "0 0 calc((100% - 12px) / 2 - 0.02px)",
+          maxWidth: "none",
+          minWidth: "0px",
+        };
+      }
+      return {
+        flex: `0 0 calc((100% - ${gap}px) / 4 - 0.02px)`,
+        maxWidth: "none",
+        // `min-width: 0` is what makes the four-up arithmetic hold. Without it a
+        // flex item refuses to shrink below its content, and the history feed
+        // proves it: its subtitle ("Local - 2026/11/03 14:18 - action - 8P") is
+        // long enough to force one cell 9px wider, which pushed the fourth card
+        // onto the next row and staggered everything after it.
+        minWidth: "0px",
+        marginLeft: index % 4 === 2 ? `${gap}px` : null,
+      };
+    },
     // Uploading galleries lives in the toolbox file manager, not on the feed, so
     // the empty-library state has to hand the user the path to it -- otherwise
     // "your library is empty" is a dead end for someone who skipped the setup
@@ -1132,6 +1229,7 @@ export default {
       this.closeMobilePreview();
     },
     homeGridColumns() {
+      if (this.dualScreenActive) return this.showMobilePreview ? 2 : 4;
       const w = Number(this.viewportWidth || (typeof window !== "undefined" ? window.innerWidth : 0) || 0);
       const wide = String(this.homeViewMode || "wide") === "wide";
       if (w >= 1280) return wide ? 4 : 6;
@@ -1144,11 +1242,18 @@ export default {
       const rows = Array.isArray(this.filteredHomeItems) ? this.filteredHomeItems : [];
       const cols = Math.max(1, Number(this.homeGridColumns() || 1));
       const i = Math.max(0, Math.min(rows.length - 1, Number(index || 0)));
-      const rowStart = Math.floor(i / cols) * cols;
-      const rowItems = rows.slice(rowStart, rowStart + cols).filter((x) => String(x?.source || "") !== "folder");
+      const layout = galleryPickerLayout({
+        index: i, columns: cols, dualScreen: this.dualScreenActive,
+        startX: Number(touch?.clientX ?? this._longPressStartX ?? 0),
+        leftWidth: dualScreen.state.leftWidth,
+        rightWidth: dualScreen.state.rightWidth,
+        hinge: dualScreen.state.gap,
+      });
+      const rowItems = rows.slice(layout.start, layout.end).filter((x) => String(x?.source || "") !== "folder");
       if (!rowItems.length) return;
       const selectedIndex = Math.max(0, rowItems.findIndex((x) => this.previewItemKey(x) === this.previewItemKey(item)));
       this.longPressPickerItems = rowItems;
+      this.longPressPickerLayout = layout;
       this.longPressPickerIndex = selectedIndex;
       this._longPressBaseIndex = selectedIndex;
       this._longPressMoveX = Number(touch?.clientX || this._longPressStartX || 0);
@@ -1184,6 +1289,7 @@ export default {
       }
       this.longPressPickerOpen = false;
       this.longPressPickerItems = [];
+      this.longPressPickerLayout = null;
       this.longPressPickerIndex = 0;
       this._longPressBaseIndex = 0;
       this._longPressAnchorY = 0;
@@ -2409,19 +2515,23 @@ export default {
   transform: translateY(-2px);
 }
 
-.mobile-category-grid {
-  justify-content: center;
+.home-filter-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.mobile-category-btn {
-  min-width: 138px;
-  width: 138px;
-  padding-inline: 6px !important;
+.home-filter-categories .category-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  max-width: 100%;
+  padding-inline: 10px !important;
 }
 
 .home-items-zone {
   min-height: 42vh;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
 }
 
 .home-card,
@@ -2441,10 +2551,19 @@ export default {
    scrubs on. Declaring the card as a self-managed surface removes both: the
    browser keeps vertical scrolling, gives up everything else. */
 .home-card {
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
   user-select: none;
+  /* feat-5: a 1000-item feed put ~115k nodes in the DOM and every one of them in
+     the layout/paint path, which is where the scroll stutter came from. Skipping
+     layout and paint for cards outside the viewport is the cheapest way to take
+     that back. `auto` in `contain-intrinsic-size` makes the browser remember a
+     card's real height after it has been rendered once, so the scrollbar and the
+     saved scroll position do not drift as cards re-enter. 301px is the measured
+     four-up card pitch, used only for cards that have never been painted. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 301px;
 }
 
 /* While the finger is down waiting for the 430ms timer, nothing in the card may
@@ -2739,6 +2858,102 @@ export default {
 
 .tag-suggest-chip {
   border: 1px solid rgba(148, 163, 184, 0.5);
+}
+
+/* Dual-screen header: the controls form one band across the hinge instead of
+   crowding into the left panel and leaving the right one empty.
+
+   Six tracks -- two per panel plus the hinge -- so the four groups land in a
+   2 x 2 arrangement: the search field above two equal-width action buttons on
+   the left, the view toggle above the switch row on the right. The hinge track
+   is what keeps the two halves visually separate without any spacer element.
+
+   `.home-search-row` uses `display: contents`, which is the whole trick: sort
+   and filter live inside that row for the single-panel layout, and dissolving
+   the wrapper lets them become grid items here without duplicating the markup. */
+.duo-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr var(--duo-hinge, 27px) 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Both wrappers have to dissolve. `.mb-3` is the one that is easy to miss: the
+   search row sits inside it, so without this the whole group is a single grid
+   item in track 1 and the buttons stack inside it -- measured on the device as
+   `mb-3: 241x128`, one track wide.
+
+   `!important` because the inner element also carries Vuetify's `d-flex`, which
+   is itself `display: flex !important`. */
+.duo-header > .mb-3,
+.duo-header .home-search-row {
+  display: contents !important;
+}
+
+.duo-header .home-search-input {
+  grid-column: 1 / 3;
+  grid-row: 1;
+}
+
+/* Two equal buttons rather than two icons: the row they sit on is otherwise
+   empty once the hinge has taken its share. */
+.duo-header .home-sort-btn,
+.duo-header .home-filter-btn {
+  width: 100% !important;
+  height: 44px !important;
+  grid-row: 2;
+}
+
+.duo-header .home-sort-btn {
+  grid-column: 1;
+}
+
+.duo-header .home-filter-btn {
+  grid-column: 2;
+}
+
+.duo-header .home-filter-wide {
+  grid-column: 1 / 3;
+}
+
+.duo-header .home-tab-row {
+  grid-column: 4 / 6;
+  grid-row: 1;
+  justify-content: flex-end !important;
+}
+
+.duo-header .duo-switch-row {
+  grid-column: 4 / 6;
+  grid-row: 2;
+  margin-top: 0 !important;
+}
+
+/* The right panel mirrors the app bar: its controls hug the outer edge, so the
+   two halves read as one band rather than two left-aligned columns. */
+.duo-header .duo-switch-row > .d-flex {
+  justify-content: flex-end;
+}
+
+/* "Load more" is centred in the content width, which is the whole viewport, so
+   on a dual screen it lands in the middle of the hinge. Keeping it on the left
+   panel puts it under the cards it appends to. */
+.duo-left-band {
+  max-width: calc(var(--duo-left-width, 100%) - 48px);
+}
+
+/* The detail drawer already sits on the right edge; on a dual screen it is sized
+   to the right panel exactly, so it fills the second screen instead of leaving
+   a strip of feed visible beside it. */
+.duo-detail-right {
+  --tablet-preview-pane-width: var(--duo-right-width, 50%);
+}
+
+/* With the detail open the feed narrows to the left panel and reads two across,
+   which is what the layout promises: galleries on one screen, the card on the
+   other. */
+.duo-feed-left {
+  max-width: calc(var(--duo-left-width, 100%) - 48px);
 }
 
 /* Keeps the staged-tag strip from collapsing the dialog when it is empty. */

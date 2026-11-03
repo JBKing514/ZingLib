@@ -55,11 +55,19 @@ test("auto is the default tier and validates against the known set", () => {
 
 test("paged reading keeps the ordinary image rendering path", () => {
   const page = read("./src/views/ReaderPage.vue");
-  assert.match(page, /:src="pageRenderUrl\(spreadLeftPage\)"/);
-  assert.match(page, /:src="pageRenderUrl\(spreadRightPage\)"/);
-  // The keyed transition is what makes a page turn an out-in animation again.
-  assert.match(page, /<transition :name="pageTransitionName" mode="out-in">/);
-  assert.match(page, /:key="`p-\$\{currentPage\}-\$\{spreadDouble \? 'd' : 's'\}`"/);
+  // The spread renders the *committed* pages, not the requested one: the queue
+  // only advances `renderState` once the bytes have decoded (feat-3).
+  assert.match(page, /:src="pageRenderUrl\(renderLeftPage\)"/);
+  assert.match(page, /v-if="renderState\.double && renderRightPage > 0"/);
+  assert.match(page, /:src="pageRenderUrl\(renderRightPage\)"/);
+  // A page turn is still a keyed transition -- the key moved from `currentPage`
+  // to the committed state so the DOM swaps exactly once, when the new page is
+  // ready. It is deliberately NOT `out-in` any more: out-in removes the old
+  // spread before the new one mounts, which is what left a blank frame on every
+  // turn. The stress harness (tools/reader_flip_stress.mjs) measures that gap.
+  assert.match(page, /<transition :name="pageTransitionName">/);
+  assert.doesNotMatch(page, /mode="out-in"/);
+  assert.match(page, /:key="`p-\$\{renderState\.page\}-\$\{renderState\.double \? 'd' : 's'\}`"/);
 });
 
 test("the server-side contract: auto is a mode, downsampling only above the hint", () => {

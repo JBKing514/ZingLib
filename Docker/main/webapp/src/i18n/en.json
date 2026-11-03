@@ -863,7 +863,6 @@
   "theme.mode.light": "Light",
   "theme.mode.dark": "Dark",
   "topbar.settings.language": "Language",
-  "topbar.settings.zoom": "Page Zoom",
   "settings.text_ingest.prune": "Prune records missing from a full import",
   "settings.worker.only_missing": "Worker processes only missing items",
   "settings.text_ingest.batch": "Metadata import batch size",
@@ -963,5 +962,9 @@
   "settings.reader.key_hint": "Separate several keys with commas, e.g. a,d. Defaults: A previous, D next.",
   "settings.reader.wheel_paging": "Mouse-wheel paging",
   "settings.reader.wheel_natural": "Natural scrolling direction",
-  "home.progress.title": "Reading progress {percent}%"
+  "home.progress.title": "Reading progress {percent}%",
+  "settings.local_lib.duo_mode": "Dual-screen layout",
+  "settings.local_lib.duo_mode_hint": "Split the layout across both panels and keep content off the hinge; enabled automatically on Surface Duo, manual elsewhere",
+  "settings.other.duo_debug": "Dual-screen debug overlay",
+  "settings.other.duo_debug_hint": "Adds duo=1 to the address and shows the measured panel/hinge geometry; turn it off for normal use"
 }

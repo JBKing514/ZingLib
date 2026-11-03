@@ -303,6 +303,50 @@ def home_history(
     }
 
 
+def _local_feed_tail_rows(
+    *,
+    cfg: dict[str, Any],
+    ranked_arcids: list[str],
+    cats: list[str],
+    tags: list[str],
+    offset: int,
+    limit: int,
+    sort_order: str,
+) -> list[dict[str, Any]]:
+    """Rows the recommendation list does not cover.
+
+    The XP feed is served from the recommender, which can only score galleries it
+    has tags or a cover vector for. Everything else in the library is invisible to
+    it, so the feed used to end early -- 44 items out of 1013 on a freshly seeded
+    library -- and `has_more` reported false while the disk still held galleries.
+    This is the same DB ordering the non-XP feed uses, minus the galleries the
+    ranking already served, so the feed can continue where the ranking stops.
+    """
+    order_dir = "ASC" if str(sort_order or "desc").strip().lower() == "asc" else "DESC"
+    conds: list[str] = ["COALESCE(w.source, 'lrr') <> 'missing'"]
+    params: list[Any] = []
+    cat_tag_vals = [f"category:{c}" for c in cats if c and c != "__none__"]
+    if cat_tag_vals:
+        conds.append("EXISTS (SELECT 1 FROM unnest(w.tags) t(tag) WHERE lower(t.tag) = ANY(%s))")
+        params.append(cat_tag_vals)
+    for t in tags:
+        conds.append("EXISTS (SELECT 1 FROM unnest(w.tags) tt(tag) WHERE lower(tt.tag) LIKE %s)")
+        params.append(f"%{t}%")
+    if ranked_arcids:
+        conds.append("w.arcid <> ALL(%s::text[])")
+        params.append([str(a) for a in ranked_arcids if str(a or "").strip()])
+    sql = (
+        "SELECT w.arcid, w.title, w.tags, w.eh_posted, w.date_added, w.lastreadtime, "
+        "w.local_dir, w.source, w.raw, w.raw->>'rating' AS rating, w.raw->>'bookmark' AS bookmark "
+        "FROM works w "
+        f"WHERE {' AND '.join(conds)} "
+        f"ORDER BY COALESCE(w.date_added, 0) {order_dir}, w.arcid {order_dir} "
+        "OFFSET %s LIMIT %s"
+    )
+    params.extend([int(max(0, offset)), int(max(1, limit))])
+    return query_rows(sql, tuple(params))
+
+
 @router.get("/api/home/local")
 def home_local(
     request: Request,
@@ -373,7 +417,30 @@ def home_local(
                         raw["bookmark"] = b
                         patched.append({**it, "raw": raw})
                     items = patched
-            next_cursor = str(end) if end < len(all_items) else ""
+            # The ranking only holds galleries it could score. When the page runs
+            # past its end, continue with the plain DB ordering so the feed does
+            # not dead-end while galleries are still on disk.
+            tail_served = 0
+            tail_more = False
+            # Even a full final ranking page needs one tail row of lookahead.
+            if end >= len(all_items):
+                ranked_arcids = [str(it.get("arcid") or "").strip() for it in all_items]
+                tail_need = int(limit) - len(items)
+                tail_rows = _local_feed_tail_rows(
+                    cfg=cfg,
+                    ranked_arcids=ranked_arcids,
+                    cats=cats,
+                    tags=tags,
+                    offset=max(0, offset - len(all_items)),
+                    limit=tail_need + 1,
+                    sort_order=safe_sort_order,
+                )
+                tail_more = len(tail_rows) > tail_need
+                tail_items = [_item_from_work(r, cfg) for r in tail_rows[:tail_need]]
+                items = items + _filter_by_min_rating(tail_items, min_rating)
+                tail_served = min(tail_need, len(tail_rows))
+            more_ahead = end < len(all_items) or tail_more
+            next_cursor = str(offset + len(all_items[offset:end]) + tail_served) if more_ahead else ""
             return {
                 "items": items,
                 "next_cursor": next_cursor,

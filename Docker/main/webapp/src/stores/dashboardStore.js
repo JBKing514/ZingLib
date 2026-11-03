@@ -1185,6 +1185,10 @@ export const useDashboardStore = defineStore("dashboard", () => {
 
   async function resetHomeFeed() {
     const target = activeHomeState.value;
+    // A reset supersedes an in-flight append. Otherwise clearing the rows while
+    // loading drops the reset request and keeps only the append's later page.
+    _nextFeedRequestId(currentFeedTabKey());
+    target.loading = false;
     target.items = [];
     target.cursor = "";
     target.hasMore = !isUploadTab() && !(isLocalGalleryTab() && isLocalFolderMode());

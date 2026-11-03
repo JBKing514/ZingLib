@@ -863,7 +863,6 @@
   "theme.mode.light": "浅色",
   "theme.mode.dark": "深色",
   "topbar.settings.language": "语言",
-  "topbar.settings.zoom": "页面缩放",
   "settings.text_ingest.prune": "全量导入时清理未出现的记录",
   "settings.worker.only_missing": "入库服务仅处理缺失向量信息的画廊",
   "settings.text_ingest.batch": "元数据导入批大小",
@@ -963,5 +962,9 @@
   "settings.reader.key_hint": "多个按键用逗号分隔，例如 a,d。默认 A 上一页、D 下一页。",
   "settings.reader.wheel_paging": "鼠标滚轮翻页",
   "settings.reader.wheel_natural": "自然滚动方向",
-  "home.progress.title": "阅读进度 {percent}%"
+  "home.progress.title": "阅读进度 {percent}%",
+  "settings.local_lib.duo_mode": "双屏布局",
+  "settings.local_lib.duo_mode_hint": "按两块屏幕分栏并避开中间铰链；仅在 Surface Duo 上自动开启，其他设备可手动启用",
+  "settings.other.duo_debug": "双屏布局调试浮层",
+  "settings.other.duo_debug_hint": "打开后地址会带上 duo=1，显示面板/铰链的实测几何；正式使用请关闭"
 }

@@ -31,16 +31,25 @@ An entry leaves its `feat` bucket only when: (1) the corresponding branch has be
 
 Completed releases are no longer duplicated in the ROADMAP; release history belongs in `CHANGELOG.md`. The current patch line repairs existing behaviour only and does not add new feature surface.
 
-## 1.2.0 — the next minor's `feat` bucket (logged only, not implemented)
+## 1.2.0 — current minor worklist
 
-**The branch has not been cut.** Until `v1.2.0-beta` really exists, entries here are **logged only — no code**.
+**The `v1.2.0-beta` branch is active.** `feat-1`, `feat-3` and `feat-4` are complete; `feat-5` is implemented and has passed automated regression, pending manual device acceptance.
 
 | # | What | Why it is not a patch item |
 | --- | --- | --- |
-| feat-1 | **OPDS**: expose the local library as an OPDS catalog for third-party readers (Panels, KyBook, Moon+ Reader, ...) | A whole new outward protocol surface and data exit; the user plainly gains a new way to use the library → `feat` |
-| feat-2 | **Auto-resolution resampling strategy**: offer Performance (BILINEAR) and Quality (Lanczos) modes, with clear copy that every server-side downsample trades CPU time for network bandwidth; users may choose for their host or bypass processing with Original | Adds a visible quality/compute policy and setting that changes server image-processing cost → `feat` |
-| feat-3 | **Reader double buffering and page transitions**: retain current and next display buffers; if the next page is not ready, keep the current page visible with loading progress and transition only after decoding completes, never exposing the black stage | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
-| feat-4 | **Remove in-app page/DPI zoom**: delete the zoom setting, runtime CSS scaling, and related coordinate compensation; keep application rendering at 100%, ignore existing saved values, and leave whole-page scaling to browser zoom or device DPI | Contracts the user-facing feature surface and reunifies the coordinate system used by long press, dragging, overlays, and hit testing → `feat` |
+| feat-1 | **Complete: Surface Duo hinge avoidance** for the feed, right-panel preview, reader spreads, and left-panel filter/sort dialogs. Long-press pickers retain whole-row candidates and are positioned on the screen where the press began. Use the **27 CSS px** gap calibrated on a Duo 2 when segment APIs are unavailable, with a manual layout switch and an optional geometry overlay. Prefer measured segments when the enumeration API is available | Adds a segment-aware layout strategy → `feat`; verified on the device and in ordinary phone/desktop layouts |
+| feat-3 | **Complete: reader double buffering and page transitions**. The navigated page and the displayed page are separate: a turn commits only after the target has decoded (both halves in a spread), a burst of turns commits only its last target, and stale requests are dropped. The swap is a cross-fade rather than `out-in`, so the old page stays painted until the new one is ready. Stress run on a 220-page gallery: 40 turns at normal speed with zero blank frames; continuous fast flipping (~15-20 pages/s) leaves about 1% of single frames undecoded | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
+| feat-4 | **Complete: remove in-app page/DPI zoom**. Delete the zoom menu, state and storage reads, CSS zoom, and gesture coordinate compensation; ignore legacy browser preferences and leave whole-page scaling to browser zoom or device DPI | Contracts the user-facing feature surface and unifies touch coordinates → `feat` |
+| feat-5 | **Implemented, pending manual acceptance: infinite-scroll performance**. Retain card `content-visibility`; manage distant cover sources consistently in grids/lists with batched releases, re-entry restoration and unmount/KeepAlive cleanup. Image children track visibility independently of raw metadata and the full grid; successful loads avoid retry-state writes. Fix XP tail continuation at exact ranking-page boundaries and resets losing the first page during append. A single same-device programmatic-scroll comparison with 960 items measured top/middle frame p50 of about 33.1ms → 24.9ms; long-task totals were about 919→368ms and 419→205ms respectively, with final p95 about 50ms. This excludes native fling and is not a stable-frame-rate guarantee; image-element counts and JS heap do not measure decoded/GPU image memory | Changes cover resource lifetime and adds reproducible measurement; automated regression passed, native-fling feel awaits manual device acceptance |
+
+## 1.3.0 — the minor after that (`feat` work plus major dependency upgrades)
+
+**Logged only, not implemented.** Same contract as the bucket above: no code until the branch is cut.
+
+| # | What | Note |
+| --- | --- | --- |
+| feat-1 | **OPDS**: expose the local library as an OPDS catalog for third-party readers (Panels, KyBook, Moon+ Reader, ...) | Moved here from `1.2.0` on 2026-11-03; handled together with the dependency upgrades |
+| chore-1 | **Major dependency upgrades**: front end `vue-router` 5 / `vuetify` 4 / `pinia` 4 / `vite-plugin-pwa` 2; back end `fastapi` 0.159 / `scipy` 1.18; CI `upload-artifact` 7 / `download-artifact` 8 | All change behaviour or need code adaptation, so none belongs in the patch line; `fastapi` and `scipy` do not even pass CI today and need separate investigation |
 
 ## Relationship to the other files
 

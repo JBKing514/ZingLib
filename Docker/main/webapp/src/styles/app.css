@@ -1,5 +1,4 @@
 html {
-  --zgl-page-zoom: 1;
   font-size: 16px;
 }
 
@@ -9,15 +8,6 @@ body,
   width: 100%;
   min-height: 100dvh;
   margin: 0;
-}
-
-/* CSS zoom already gives the application a correspondingly smaller/larger
-   layout viewport. An inverse width would compensate twice, leaving a gutter
-   when zoomed in and overflowing the app bar when zoomed out. */
-#app {
-  zoom: var(--zgl-page-zoom);
-  width: 100%;
-  min-height: 100dvh;
 }
 
 /* Private mode changes the application palette, never the rendered media.
@@ -43,7 +33,7 @@ body,
 }
 
 .v-main {
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   background:
     radial-gradient(circle at 8% 12%, rgba(var(--v-theme-primary), 0.14), transparent 30%),
     radial-gradient(circle at 90% 8%, rgba(var(--v-theme-secondary), 0.12), transparent 28%),
@@ -712,4 +702,43 @@ canvas {
     max-width: none !important;
     transition: flex-basis 220ms ease, max-width 220ms ease;
   }
+}
+
+
+/* The quick actions keep their bottom-left home and simply step aside while an
+   overlay is open: on a dual screen the dialogs live in that same panel, so the
+   two would otherwise sit on top of each other. `:has()` reads what is actually
+   rendered instead of a flag that has to be kept in sync -- two attempts at
+   syncing one failed because the state lived on the page, not in the store. */
+html.duo-active:has(.v-overlay--active) .quick-fab-wrap {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The store parks the stack beside the rail (92px) or the drawer (292px), which
+   on a dual screen puts it in the middle of the left panel rather than its
+   corner. */
+html.duo-active .quick-fab-wrap {
+  left: 24px !important;
+}
+
+/* Keep the empty band between reader pages over the physical hinge. */
+html.duo-active .paged-spread.double {
+  gap: var(--duo-hinge, 27px);
+  overflow: hidden;
+}
+
+html.duo-active .paged-spread.double > .reader-image {
+  min-width: 0;
+}
+
+/* Keep the full-viewport modal/scrim; only its content belongs to the left panel.
+   The content class is supplied explicitly because Vuetify teleports overlays. */
+html.duo-active .home-filter-overlay > .home-filter-content,
+html.duo-active .home-sort-overlay > .home-sort-content {
+  left: 16px;
+  right: auto;
+  width: calc(var(--duo-left-width) - 32px);
+  max-width: calc(var(--duo-left-width) - 32px) !important;
+  margin-inline: 0;
 }

@@ -592,7 +592,10 @@ test("an explicit tap ignores the arm delay, because a click is unambiguous", ()
 
 test("the paged feed's bottom affordances cannot cancel each other out", () => {
   const dash = read("./src/views/DashboardScopePage.vue");
-  assert.match(dash, /<div v-if="!feedPaged" class="d-flex justify-center py-2">/, "infinite keeps load-more");
+  // `[^>]*` because the wrapper carries an extra class binding on a dual screen.
+  // The invariant is that the infinite feed keeps this button, not that the tag
+  // has exactly these attributes.
+  assert.match(dash, /<div v-if="!feedPaged" class="d-flex justify-center py-2"[^>]*>/, "infinite keeps load-more");
   assert.match(dash, /<FeedPager\s+v-else/, "paged swaps it for the page bar");
   assert.match(dash, /v-if="feedPaged && feedPullToPage && feedCanNext"/, "the pull gesture is extra, not instead");
   assert.match(dash, /:max-page="feedMaxJump"/);

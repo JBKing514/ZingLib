@@ -11,6 +11,7 @@ import {
   resolveWheelAction,
   canTurnFromWheel,
   defaultIsEditableTarget,
+  bindReaderShortcuts,
 } from "./src/utils/readerShortcuts.js";
 
 test("turn keys parse from the shapes a settings field actually produces", () => {
@@ -65,6 +66,33 @@ test("wheel paging accepts at most one turn per 150ms window", () => {
   assert.equal(canTurnFromWheel(1000, 1150), true);
   assert.equal(canTurnFromWheel(1150, 1301), true);
   assert.equal(canTurnFromWheel(1000, Number.NaN), false, "a broken clock cannot trigger a turn");
+});
+
+test("browser zoom bypasses wheel paging without consuming its damping window", (t) => {
+  const originalWindow = globalThis.window;
+  const listeners = new Map();
+  globalThis.window = {
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: (type) => listeners.delete(type),
+  };
+  let turns = 0;
+  let prevented = 0;
+  const dispose = bindReaderShortcuts({ onNext: () => turns++, now: () => 1000 });
+  t.after(() => {
+    dispose();
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  });
+  const wheel = (modifiers) => listeners.get("wheel")({
+    deltaY: 120, preventDefault: () => prevented++, ...modifiers,
+  });
+  wheel({ ctrlKey: true });
+  wheel({ metaKey: true });
+  assert.equal(turns, 0);
+  assert.equal(prevented, 0, "browser zoom is allowed to handle the event");
+  wheel({});
+  assert.equal(turns, 1, "ordinary wheel paging still reacts immediately");
+  assert.equal(prevented, 1);
 });
 
 test("an editable target keeps its keystrokes", () => {

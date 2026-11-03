@@ -29,8 +29,13 @@
         @open-item="openEndRec"
       />
       <template v-else>
-      <transition :name="pageTransitionName" mode="out-in">
-        <div :key="`p-${currentPage}-${spreadDouble ? 'd' : 's'}`" class="paged-spread" :class="{ double: spreadDouble }">
+      <!-- Cross-fade rather than `out-in`: with out-in the old spread leaves
+           before the new one mounts, so a turn shows nothing for as long as the
+           incoming image needs to decode. Keeping both on screen for the length
+           of the transition is what makes the buffer visible -- the old page is
+           still painted while the new one arrives. -->
+      <transition :name="pageTransitionName">
+        <div :key="`p-${renderState.page}-${renderState.double ? 'd' : 's'}`" class="paged-spread" :class="{ double: renderState.double }">
           <!-- The two slots are bound by *side*, not by page number. Flowing
                the lower page first puts page 3 in the left slot, so an RTL
                spread drew 3|2 -- the start page was right but the pair read
@@ -39,7 +44,7 @@
                right, so the halves swap with the direction and nothing else
                about the order (start page, step, wheel strip) has to move. -->
           <img
-            :src="pageRenderUrl(spreadLeftPage)"
+            :src="pageRenderUrl(renderLeftPage)"
             class="reader-image"
             :class="`fit-${fitMode}`"
             :style="readerFilterStyle"
@@ -50,8 +55,8 @@
             @error="onPagedImageError"
           />
           <img
-            v-if="spreadDouble && spreadRightPage > 0"
-            :src="pageRenderUrl(spreadRightPage)"
+            v-if="renderState.double && renderRightPage > 0"
+            :src="pageRenderUrl(renderRightPage)"
             class="reader-image"
             :class="`fit-${fitMode}`"
             :style="readerFilterStyle"
@@ -235,6 +240,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { createPageCommitQueue } from "../utils/pageCommitQueue";
 import { useRoute, useRouter } from "vue-router";
 import { closeReaderSession, getReaderManifest, getReaderSessionStatus, getReaderSimilar, openReaderSession, postReaderBookmarkSet, postReaderReadEvent, updateReaderSessionCursor } from "../api";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -463,17 +469,75 @@ const readerFilterStyle = computed(() => {
 // The start page and the step are deliberately untouched: `currentPage` is
 // already the leading page of the spread in both directions, exactly as the
 // page-turn code assumes when it advances by `pageStep`.
-const spreadLeftPage = computed(() => {
-  const cur = Number(currentPage.value || 1);
-  if (!spreadDouble.value) return cur;
+function leadingPageOf(page, double) {
+  const cur = Number(page || 1);
+  if (!double) return cur;
   return isRtl.value ? cur + 1 : cur;
-});
-const spreadRightPage = computed(() => {
-  const cur = Number(currentPage.value || 1);
-  if (!spreadDouble.value) return 0;
+}
+function trailingPageOf(page, double) {
+  if (!double) return 0;
+  const cur = Number(page || 1);
   const leading = isRtl.value ? cur : cur + 1;
   return leading <= Number(totalPages.value || 1) ? leading : 0;
+}
+const spreadLeftPage = computed(() => leadingPageOf(currentPage.value, spreadDouble.value));
+const spreadRightPage = computed(() => trailingPageOf(currentPage.value, spreadDouble.value));
+
+/* What is actually on screen. `currentPage` is where the reader is *going*; this
+   is where it *is*, and the two only meet once the target has decoded. Everything
+   else in the reader (prefetch, progress, bookmarks) keeps using `currentPage`,
+   so the lag is invisible to it. */
+const renderState = ref({ page: Number(currentPage.value || 1), double: spreadDouble.value });
+const renderLeftPage = computed(() => leadingPageOf(renderState.value.page, renderState.value.double));
+const renderRightPage = computed(() => trailingPageOf(renderState.value.page, renderState.value.double));
+/* Decode the bytes before the turn reaches the screen. `decode()` is what makes
+   "decoded" true rather than merely "downloaded": without it the swap can still
+   paint a frame of nothing while the decoder catches up. */
+function preloadPageImage(url) {
+  return new Promise((resolve) => {
+    const src = String(url || "").trim();
+    if (!src) {
+      resolve(false);
+      return;
+    }
+    const img = new Image();
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    img.onload = () => {
+      if (typeof img.decode === "function") img.decode().then(() => finish(true), () => finish(true));
+      else finish(true);
+    };
+    img.onerror = () => finish(false);
+    img.src = src;
+    if (img.complete && img.naturalWidth > 0) finish(true);
+  });
+}
+
+const pageCommitQueue = createPageCommitQueue({
+  load: preloadPageImage,
+  onCommit: (key) => {
+    const [mode, page] = String(key).split(":");
+    const n = Number(page || 1);
+    renderState.value = { page: n, double: mode === "d" };
+    clearPagedProgressTimer();
+    pagedLoadProgress.value = 100;
+    pagedImageState.value = { page: n, loading: false, error: false };
+  },
 });
+
+const pageCommitKey = computed(() => `${spreadDouble.value ? "d" : "s"}:${Number(currentPage.value || 1)}`);
+
+watch(pageCommitKey, () => {
+  const urls = [pageRenderUrl(spreadLeftPage.value)];
+  if (spreadDouble.value && spreadRightPage.value > 0) urls.push(pageRenderUrl(spreadRightPage.value));
+  markPagedLoading(spreadLeftPage.value);
+  pageCommitQueue.request(pageCommitKey.value, urls.filter(Boolean));
+}, { immediate: true });
+
 const ghostPages = computed(() => {
   const maxPage = Math.max(1, Number(totalPages.value || 1));
   const inRange = (p) => Number.isFinite(p) && p >= 1 && p <= maxPage;
@@ -1184,26 +1248,27 @@ function markPagedLoading(page) {
 }
 
 function onPagedImageLoad() {
-  if (Number(pagedImageState.value.page || 0) !== Number(currentPage.value || 1)) return;
-  const base = String(pageImageUrl(currentPage.value) || "").trim();
+  const shown = Number(renderState.value.page || 1);
+  if (Number(pagedImageState.value.page || 0) !== shown) return;
+  const base = String(pageImageUrl(shown) || "").trim();
   if (base) {
     localPrefetchSeen.add(base);
   }
   clearPagedProgressTimer();
   pagedLoadProgress.value = 100;
-  pagedImageState.value = { page: Number(currentPage.value || 1), loading: false, error: false };
+  pagedImageState.value = { page: shown, loading: false, error: false };
 }
 
 function onPagedImageError() {
-  const page = Number(currentPage.value || 1);
+  const page = Number(renderState.value.page || currentPage.value || 1);
   const src = String(pageRenderUrl(page) || "").trim();
   if (!src || !manifestReady.value) {
     markPagedLoading(page);
     return;
   }
-  if (Number(pagedImageState.value.page || 0) !== Number(currentPage.value || 1)) return;
+  if (Number(pagedImageState.value.page || 0) !== page) return;
   clearPagedProgressTimer();
-  pagedImageState.value = { page: Number(currentPage.value || 1), loading: false, error: true };
+  pagedImageState.value = { page, loading: false, error: true };
 }
 
 function retryCurrentPage() {
@@ -1479,7 +1544,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100dvh;
   overflow: hidden;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   -webkit-touch-callout: none;
   user-select: none;
 }
@@ -1526,9 +1591,12 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+
+
 .paged-spread.double .reader-image {
   width: 50%;
 }
+
 
 .continuous-image {
   width: 100%;

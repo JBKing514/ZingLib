@@ -13,13 +13,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
+import { createRenderer, ref, shallowRef } from "vue";
 import {
   resolveSidebarSwipe,
   sidebarSwipeEdge,
   SIDEBAR_SWIPE_EDGE_RATIO,
   SIDEBAR_SWIPE_TRAVEL,
-  readPageZoom,
-  unzoomPointer,
+  useSidebarSwipe,
 } from "./src/composables/useSidebarSwipe.js";
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -194,55 +194,50 @@ test("both filter panels can be dismissed, not only by tapping the scrim", () =>
   }
 });
 
-// --- page zoom must not desynchronise the gesture -------------------------
-//
-// `#app { zoom: var(--zgl-page-zoom) }` shrinks the *layout* viewport, but
-// `window.innerWidth` keeps reporting the unzoomed width and a `clientX` read
-// inside the zoomed subtree is reported in zoomed space. At any zoom != 100% the
-// edge zone (innerWidth/3, unzoomed) and the pointer that has to fall inside it
-// (zoomed) were therefore measured in two different units: at 80% the zone the
-// user could actually reach was a fifth of the screen wider than intended, and
-// the travel threshold was off by the same factor.
-
-test("the edge zone and the pointer are measured in the same units under zoom", () => {
-  // At 100% nothing changes.
-  assert.equal(unzoomPointer(120, 1), 120);
-  assert.equal(unzoomPointer(120, undefined), 120, "a missing zoom is treated as 100%");
-  assert.equal(unzoomPointer(120, 0), 120, "and so is a nonsense one, rather than dividing by zero");
-
-  // In the zoomed subtree the browser reports 80px for a point that is 100 CSS
-  // px from the edge; dividing by the zoom puts it back on the layout grid.
-  assert.equal(unzoomPointer(80, 0.8), 100);
-  assert.equal(unzoomPointer(160, 1.6), 100);
-
-  // The collaboration, which is what actually broke: a pull that starts 100 CSS
-  // px from the edge is inside the 360px zone at *any* zoom, because both sides
-  // are normalised before they meet.
-  const atZoom = (zoom, startCss) => resolveSidebarSwipe(pull({
-    startX: unzoomPointer(startCss * zoom, zoom),
-    dx: unzoomPointer(90 * zoom, zoom),
-  }));
-  assert.equal(atZoom(1, 100), "");
-  assert.equal(atZoom(0.8, 100), "", "opening stays disabled at 80% zoom");
-  assert.equal(atZoom(1.6, 100), "", "opening stays disabled at 160% zoom");
-  assert.equal(atZoom(0.8, 200), "", "and a start well past the zone still does not open");
-});
-
-test("the composable reads the live zoom, not a value captured once", () => {
-  assert.equal(readPageZoom(), 1, "no document in the test: the neutral value");
-  // A string CSS value, an empty declaration and a stray custom property all
-  // have to resolve to a usable number -- `Number("")` is 0, which would make
-  // every unzoom a division by zero.
-  assert.equal(unzoomPointer(50, readPageZoom()), 50);
-
-  const src = read("./src/composables/useSidebarSwipe.js");
-  assert.match(src, /SIDEBAR_SWIPE_ZOOM_VAR = "--zgl-page-zoom"/, "the var read is the one the layout actually sets");
-  assert.match(src, /getComputedStyle\(doc\.documentElement\)/, "read it from the document element");
-  // The zoom has to be sampled per gesture: the user can change it between two
-  // swipes, and a module-level constant would keep using the old one.
-  assert.match(src, /const downZoom = readPageZoom\(\);/, "sampled when the gesture starts");
-  assert.match(src, /gestureZoom = downZoom;/, "and carried for the whole drag");
-  assert.match(src, /unzoomPointer\(touch\.clientX, gestureZoom\) - startX/, "and applied to the travel");
+test("mounted touch handlers close the drawer in client coordinates and yield to long press", (t) => {
+  const originalDocument = globalThis.document;
+  const listeners = new Map();
+  const surface = {
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: (type) => listeners.delete(type),
+  };
+  globalThis.document = {
+    querySelector: () => ({
+      getBoundingClientRect: () => ({ right: 280 }),
+      querySelector: () => null,
+    }),
+  };
+  const drawer = ref(true);
+  const longPressActive = ref(false);
+  const renderer = createRenderer({
+    createComment: () => ({}), insert() {}, remove() {},
+    parentNode: () => null, nextSibling: () => null,
+  });
+  const app = renderer.createApp({
+    setup() {
+      useSidebarSwipe({ target: shallowRef(surface), drawer, enabled: ref(true), longPressActive });
+      return () => null;
+    },
+  });
+  t.after(() => {
+    app.unmount();
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    assert.equal(listeners.size, 0, "all touch listeners are removed on unmount");
+  });
+  app.mount({});
+  const eventAt = (x) => ({
+    touches: [{ identifier: 1, clientX: x, clientY: 100 }],
+    target: { closest: () => null },
+  });
+  listeners.get("touchstart")(eventAt(220));
+  listeners.get("touchmove")(eventAt(130));
+  assert.equal(drawer.value, false, "a 90px leftward drag closes the drawer");
+  drawer.value = true;
+  longPressActive.value = true;
+  listeners.get("touchstart")(eventAt(220));
+  listeners.get("touchmove")(eventAt(130));
+  assert.equal(drawer.value, true, "the same travel cannot interrupt a gallery picker");
 });
 
 // --- the long-press picker and the drawer must not fight -------------------
@@ -300,7 +295,7 @@ test("the pressed card preserves native vertical scrolling until the picker open
   // `.card-pressing` remains useful for suppressing selection and callouts.
   assert.match(dash, /'card-pressing': cardPressingKey === previewItemKey\(item\)/,
     "the class is bound to the pressed card");
-  assert.match(dash, /\.home-card \{\s*touch-action: pan-y;/,
+  assert.match(dash, /\.home-card \{\s*touch-action: pan-y pinch-zoom;/,
     "cards allow native vertical panning from touchstart");
   assert.doesNotMatch(dash, /\.home-card\.card-pressing\s*\{[^}]*touch-action:\s*none;/,
     "waiting for a long press must not revoke native scrolling mid-gesture");

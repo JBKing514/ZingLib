@@ -21,8 +21,6 @@
       :theme-mode-icon="ui.themeModeIcon"
       :lang-options="ui.langOptions"
       :lang="ui.lang"
-      :zoom-options="ui.pageZoomOptions"
-      :page-zoom="ui.pageZoom"
       :notices="ui.notices"
       :auth-user="appStore.authUser"
       :safe-area-top-inset="settingsStore.config?.READER_VIEWPORT_FIT_COVER !== false"
@@ -30,7 +28,6 @@
       @toggle-drawer="ui.drawer = !ui.drawer"
       @cycle-theme="ui.cycleThemeMode"
       @update:lang="ui.setLangValue($event)"
-      @update:zoom="ui.setPageZoom($event)"
       @dismiss-notice="ui.dismissNotice"
       @notice-action="ui.runNoticeAction"
       @clear-all-notices="ui.clearAllNotices"
@@ -48,7 +45,13 @@
       </v-container>
     </v-main>
 
-    <div v-if="!hideReaderChrome && ui.tab === 'dashboard' && dashboardStore.showScrollQuickActions" class="quick-fab-wrap" :style="dashboardStore.quickFabStyle">
+    <duo-hinge-marker />
+
+    <div
+      v-if="!hideReaderChrome && ui.tab === 'dashboard' && dashboardStore.showScrollQuickActions"
+      class="quick-fab-wrap"
+      :style="dashboardStore.quickFabStyle"
+    >
       <v-btn color="secondary" icon="mdi-magnify" size="large" class="quick-fab" @click="dashboardStore.quickSearchOpen = true" />
       <v-btn color="info" icon="mdi-filter-variant" size="large" class="quick-fab" @click="dashboardStore.homeFiltersOpen = true" />
       <v-btn
@@ -72,8 +75,10 @@ import { useDashboardStore } from "../stores/dashboardStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAppStore } from "../stores/appStore";
 import { useSidebarSwipe } from "../composables/useSidebarSwipe";
+import { useDualScreen } from "../composables/useDualScreen";
 import AppSidebar from "./AppSidebar.vue";
 import AppTopBar from "./AppTopBar.vue";
+import DuoHingeMarker from "../components/DuoHingeMarker.vue";
 
 const ui = useLayoutStore();
 const dashboardStore = useDashboardStore();
@@ -88,6 +93,12 @@ const hideReaderChrome = computed(() => {
 });
 
 const dashboardTab = computed(() => String(dashboardStore.homeTab || "local_gallery"));
+
+
+// Owned by the shell so every page sees the same geometry, including the ones
+// that never mount the marker. It also sets the `--duo-*` custom properties that
+// the layout reads.
+useDualScreen();
 
 // The shell, not the page, owns the sidebar gesture -- so the toolbox, the XP map
 // and the settings pages all behave like the feed does. The reader hides the whole
@@ -119,3 +130,4 @@ function onSidebarGoHome(homeTab) {
 }
 
 </script>
+

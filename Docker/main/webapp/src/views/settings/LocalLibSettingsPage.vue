@@ -49,6 +49,30 @@
         </div>
         <div class="text-caption text-medium-emphasis ms-1">{{ t("settings.local_lib.show_jpn_title_hint") }}</div>
       </v-col>
+      <!-- Dual-screen layout: a layout decision, not a feed control, so it lives
+           with the other display preferences instead of taking a switch's worth
+           of the header on every visit to the library. Only offered where a
+           dual-screen device was recognised (or the user already chose), because
+           elsewhere it promises a layout the device cannot show. -->
+      <v-col v-if="dualScreenAvailable" cols="12" md="6">
+        <div class="d-flex align-center ga-2 flex-wrap">
+          <v-switch
+            :model-value="dualScreenActive"
+            color="teal"
+            inset
+            hide-details
+            :label="t('settings.local_lib.duo_mode')"
+            @update:model-value="setDualScreenMode"
+          />
+          <v-tooltip location="top" max-width="360">
+            <template #activator="{ props: tipProps }">
+              <v-icon v-bind="tipProps" icon="mdi-help-circle-outline" size="18" class="text-medium-emphasis" />
+            </template>
+            {{ t("settings.local_lib.duo_mode_hint") }}
+          </v-tooltip>
+        </div>
+        <div class="text-caption text-medium-emphasis ms-1">{{ t("settings.local_lib.duo_mode_hint") }}</div>
+      </v-col>
       <v-col cols="12" md="6">
         <div class="d-flex align-center ga-2 flex-wrap">
           <v-switch
@@ -650,6 +674,7 @@ import { useAppStore } from "../../stores/appStore";
 import { useDashboardStore } from "../../stores/dashboardStore";
 import { useLayoutStore } from "../../stores/layoutStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useDualScreen } from "../../composables/useDualScreen";
 import { useToastStore } from "../../stores/useToastStore";
 import { ensureHexColor, shiftHex } from "../../utils/helpers";
 // The mode names, the offered page sizes and the normalisers come from the store
@@ -679,6 +704,16 @@ import {
   parseCustomNamespaceConfig,
   stringifyCustomNamespaceConfig,
 } from "../../utils/tagNamespaces";
+
+
+// Shared singleton with the shell; this page only reads the result and offers
+// the switch.
+const dual = useDualScreen();
+const dualScreenAvailable = computed(() => Boolean(dual.state.available));
+const dualScreenActive = computed(() => Boolean(dual.state.active));
+function setDualScreenMode(enabled) {
+  dual.setMode(enabled ? "on" : "off");
+}
 
 const layoutStore = useLayoutStore();
 const settingsStore = useSettingsStore();

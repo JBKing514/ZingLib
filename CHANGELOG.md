@@ -10,6 +10,18 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.2.0] - 2026-11-03
+
+- Work in progress: the 1.2.0 feature set is being built on this branch; see ROADMAP.md for the bucket.
+- Added Surface Duo layouts with hinge-aware gallery grids, right-panel previews and reader spreads, plus manual layout control and an optional geometry debug overlay.
+- Filter and local-library sort dialogs stay within the left panel on dual screens. Filter categories wrap into compact text-sized buttons, keeping the default menu visible without scrolling on the tested Duo 2 landscape viewport.
+- Long-press gallery pickers keep all galleries from the current row and open within the screen where the press began, keeping selection controls clear of the hinge.
+- Reader page turns are buffered: the visible page only changes once the target has decoded, a burst of turns commits only its last target, spreads commit as a pair, and the swap cross-fades so the previous page stays on screen instead of leaving a gap.
+- Removed application-level page zoom and its gesture coordinate compensation. Existing saved zoom preferences are ignored; browser zoom and device DPI control overall scaling.
+- Long feeds skip offscreen card layout/paint and detach distant cover sources in grid and list views. Cover releases are batched, canceled on re-entry, and cleaned up when rows or KeepAlive pages leave. Image children track visibility independently of raw metadata and the full grid; placeholder loads no longer reset real-image retries, and ordinary successful loads avoid retry-state writes.
+- XP feeds continue into unranked database galleries, including when the recommendation ranking ends on an exact page boundary.
+- Resetting a feed during an append now supersedes that request and reloads page one, instead of dropping the reset and losing the first page.
+
 ## [1.1.5] - 2026-10-25
 
 - Dependency refresh: psycopg-pool 3.3.3, uvicorn 0.54.0 and cryptography 50.0.2 (patch/minor only), plus the vue runtime at 3.5.44. No behaviour change is intended; the guard suite, the container test suite and the HTTP regression were re-run against the rebuilt image.

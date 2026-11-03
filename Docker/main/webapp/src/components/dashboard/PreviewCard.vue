@@ -642,7 +642,7 @@ onBeforeUnmount(() => {
   overscroll-behavior-y: contain;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
 }
 
 @media (max-width: 960px) {

@@ -32,9 +32,9 @@ test("the spread binds its two halves by side, not by page rank", () => {
   const tpl = spreadTemplate(page);
 
   // The left half is the left half; the right half is the right half.
-  assert.match(tpl, /:src="pageRenderUrl\(spreadLeftPage\)"/);
-  assert.match(tpl, /v-if="spreadDouble && spreadRightPage > 0"/);
-  assert.match(tpl, /:src="pageRenderUrl\(spreadRightPage\)"/);
+  assert.match(tpl, /:src="pageRenderUrl\(renderLeftPage\)"/);
+  assert.match(tpl, /v-if="renderState\.double && renderRightPage > 0"/);
+  assert.match(tpl, /:src="pageRenderUrl\(renderRightPage\)"/);
 
   // The rank-ordered pair is gone. If it comes back in the template the layout
   // is order-dependent again, which is the original defect in one line.
@@ -47,21 +47,23 @@ test("the spread binds its two halves by side, not by page rank", () => {
   // is unconditional -- a `v-if` on the first <img> would let an RTL spread
   // render only the right page.
   const firstImg = tpl.indexOf("<img");
-  const leftAt = tpl.indexOf("spreadLeftPage");
-  const rightAt = tpl.indexOf("spreadRightPage");
+  const leftAt = tpl.indexOf("renderLeftPage");
+  const rightAt = tpl.indexOf("renderRightPage");
   assert.ok(leftAt > firstImg && rightAt > leftAt, "the left half must be emitted first");
 });
 
 test("the earlier page sits on the leading side of the reading direction", () => {
   const page = read("./src/views/ReaderPage.vue");
 
-  const left = page.slice(page.indexOf("const spreadLeftPage"), page.indexOf("const ghostPages"));
-  const rightIdx = page.indexOf("const spreadRightPage");
+  // feat-3 factored the pair maths into helpers so the committed state and the
+  // requested state share it; the property asserted below is unchanged.
+  const left = page.slice(page.indexOf("function leadingPageOf"), page.indexOf("function trailingPageOf"));
+  const rightIdx = page.indexOf("function trailingPageOf");
   const right = page.slice(rightIdx, page.indexOf("const ghostPages"));
 
   // Single mode has no pair to place.
-  assert.match(left, /if \(!spreadDouble\.value\) return cur;/);
-  assert.match(right, /if \(!spreadDouble\.value\) return 0;/);
+  assert.match(left, /if \(!double\) return cur;/);
+  assert.match(right, /if \(!double\) return 0;/);
 
   // RTL: the *next* page is on the left, the current one on the right.
   // LTR: the current page is on the left, the next one on the right.
@@ -90,7 +92,7 @@ test("the start page and the step are untouched by the side swap", () => {
   assert.match(ghost, /const lead = Number\(currentPage\.value \|\| 1\);/);
   assert.match(ghost, /const prevPrimary = lead - step;/);
   assert.match(ghost, /const nextPrimary = lead \+ step;/);
-  assert.doesNotMatch(ghost, /spreadLeftPage\.value - step/);
+  assert.doesNotMatch(ghost, /renderLeftPage\.value - step/);
 });
 
 test("the page-turn animation follows the content, not the page number", () => {

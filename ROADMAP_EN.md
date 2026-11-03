@@ -33,12 +33,12 @@ Completed releases are no longer duplicated in the ROADMAP; release history belo
 
 ## 1.2.0 — current minor worklist
 
-**The `v1.2.0-beta` branch is active.** `feat-1` is complete and verified on a Surface Duo 2; `feat-3` and `feat-5` await implementation.
+**The `v1.2.0-beta` branch is active.** `feat-1`, `feat-3` and `feat-4` are complete; `feat-5` awaits implementation.
 
 | # | What | Why it is not a patch item |
 | --- | --- | --- |
 | feat-1 | **Complete: Surface Duo hinge avoidance** for the feed, right-panel preview, reader spreads, and left-panel filter/sort dialogs. Long-press pickers retain whole-row candidates and are positioned on the screen where the press began. Use the **27 CSS px** gap calibrated on a Duo 2 when segment APIs are unavailable, with a manual layout switch and an optional geometry overlay. Prefer measured segments when the enumeration API is available | Adds a segment-aware layout strategy → `feat`; verified on the device and in ordinary phone/desktop layouts |
-| feat-3 | **Reader double buffering and page transitions**: retain current and next display buffers; if the next page is not ready, keep the current page visible with loading progress and transition only after decoding completes, never exposing the black stage | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
+| feat-3 | **Complete: reader double buffering and page transitions**. The navigated page and the displayed page are separate: a turn commits only after the target has decoded (both halves in a spread), a burst of turns commits only its last target, and stale requests are dropped. The swap is a cross-fade rather than `out-in`, so the old page stays painted until the new one is ready. Stress run on a 220-page gallery: 40 turns at normal speed with zero blank frames; continuous fast flipping (~15-20 pages/s) leaves about 1% of single frames undecoded | Adds a rendering state machine, buffering policy, and page-turn behaviour → `feat` |
 | feat-4 | **Complete: remove in-app page/DPI zoom**. Delete the zoom menu, state and storage reads, CSS zoom, and gesture coordinate compensation; ignore legacy browser preferences and leave whole-page scaling to browser zoom or device DPI | Contracts the user-facing feature surface and unifies touch coordinates → `feat` |
 | feat-5 | **Infinite-scroll performance**: scrolling starts stuttering at roughly 500–600 items. **Measure before changing anything**: build a library of about 1000 items, then use a separate scroll test to measure frame time, long tasks, layout/paint work, and image decoding; decide the fix (list virtualisation, image decoding policy, or the rendering path) only after the bottleneck is known | Likely changes the feed's rendering and data-layer structure, and adds a reproducible performance criterion → `feat` |
 

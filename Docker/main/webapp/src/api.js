@@ -16,11 +16,26 @@ export function setCsrfToken(token) {
   csrfToken = String(token || "");
 }
 
+/**
+ * The non-HttpOnly `zgl_csrf` cookie is the browser-side truth.
+ *
+ * A reload issues a new token, and two tabs can rotate the same session's token
+ * independently. Reading the cookie at request time keeps the header and the
+ * cookie in step even when the in-memory token captured by one tab is stale.
+ * The in-memory value remains the fallback for clients that cannot read cookies.
+ */
+function csrfCookieToken() {
+  if (typeof document === "undefined") return "";
+  const match = document.cookie.match(/(?:^|;\s*)zgl_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 api.interceptors.request.use((config) => {
   const method = String(config?.method || "get").toUpperCase();
-  if (csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+  const token = csrfCookieToken() || csrfToken;
+  if (token && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
     const headers = config.headers || {};
-    headers["x-csrf-token"] = csrfToken;
+    headers["x-csrf-token"] = token;
     config.headers = headers;
   }
   return config;

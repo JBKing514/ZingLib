@@ -46,8 +46,12 @@ canvas {
   overflow: clip;
 }
 
+/* Vuetify 4 wraps its component CSS in cascade layers, so an unlayered global
+   rule here outranks the `rounded` prop classes. Keep the app's own radius in
+   step with the theme's rounded rectangles instead of turning every icon-only
+   button into a pill/circle. */
 .v-btn {
-  border-radius: 999px;
+  border-radius: 8px;
   text-transform: none;
   font-weight: 600;
 }

@@ -12,7 +12,10 @@ versions follow Semantic Versioning:
 
 ## [1.2.2] - 2026-11-24
 
-- Fixed the CSRF mismatch after a long-lived session is refreshed: /api/auth/csrf issues a new token, but auth_guard's post-route cookie refresh overwrote it with the old token from the request. The browser then held one token while the page sent another, so mutating requests such as PUT /api/config answered 403 (including over a Tailscale HTTPS proxy). The guard now keeps the token the route just issued.
+- Fixed the CSRF mismatch after a long-lived session is refreshed: /api/auth/csrf issues a new token, but auth_guard's post-route cookie refresh overwrote it with the old token from the request. The browser then held one token while the page sent another, so mutating requests such as PUT /api/config answered 403 (including over a Tailscale HTTPS proxy). The guard now keeps the token the route just issued, and the client reads the non-HttpOnly `zgl_csrf` cookie at request time so multiple tabs cannot send a stale in-memory token.
+- Vuetify 4's cascade layers made unlayered app CSS outrank the `rounded` prop classes and the `color="surface"` bar. The top bar now uses the resolved theme surface instead of a hard-coded black override, and app buttons use rounded rectangles rather than pills/circles.
+- Surface Duo auto-detection now falls back to the browser UA string when `userAgentData` is unavailable, so an HTTPS/Tailscale deployment can still enable the dual-screen layout instead of degrading to the single-panel mobile arrangement.
+- Documented the workflow rules: merge only reviewed `in_review` changes into `agent-dev`, and bump the version / create a tag only when the task explicitly names a version or asks for a release.
 
 ## [1.2.1] - 2026-11-24
 

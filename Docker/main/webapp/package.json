@@ -12,16 +12,16 @@
   "dependencies": {
     "@mdi/font": "^7.4.47",
     "axios": "^1.9.0",
-    "pinia": "^2.3.1",
-    "plotly.js-dist-min": "^2.35.3",
+    "pinia": "^4.1.0",
+    "plotly.js-dist-min": "^4.2.0",
     "vue": "^3.5.44",
-    "vue-router": "^4.5.1",
-    "vuetify": "^3.7.12"
+    "vue-router": "^5.4.0",
+    "vuetify": "^4.3.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.2",
-    "vite": "^5.4.14",
-    "vite-plugin-pwa": "^0.21.1",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "vite": "^7.3.8",
+    "vite-plugin-pwa": "^2.0.0",
     "vite-plugin-vuetify": "^2.1.1"
   }
 }

@@ -55,6 +55,24 @@ class UploadRegression(unittest.TestCase):
         self.assertEqual(res.status_code, 404)
         self.assertEqual(res.json()['detail'], 'staged batch not found')
 
+    def test_inspect_flag_defaults_on_and_can_be_turned_off(self):
+        """A client that omits `inspect` still gets the gallery report.
+
+        FastAPI 0.159 reads a missing boolean form field as an unchecked
+        checkbox, so a `bool` parameter with a True default silently turned
+        inspection off. The flag is read as text and defaulted on purpose.
+        """
+        res = self.client.post('/api/local-lib/upload-folder', files={'files': ('1.jpg', b'image')},
+            data={'folder_name': 'Default Inspect', 'relative_paths': 'Default Inspect/1.jpg'},
+            )
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()['gallery_count'], 1, res.text)
+        res = self.client.post('/api/local-lib/upload-folder', files={'files': ('1.jpg', b'image')},
+            data={'folder_name': 'Skipped Inspect', 'relative_paths': 'Skipped Inspect/1.jpg', 'inspect': 'false'})
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()['gallery_count'], 0, res.text)
+        self.assertEqual(res.json()['galleries'], [])
+
     def test_main_router_does_not_fall_through_to_spa(self):
         from webapi.main import app
         # Exercise real registration order without auth or startup/DB effects.

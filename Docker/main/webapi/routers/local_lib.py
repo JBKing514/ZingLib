@@ -760,7 +760,10 @@ async def upload_local_folder(
     relative_paths: list[str] = Form(default=[]),
     folder_name: str = Form(default=""),
     batch_id: str = Form(default=""),
-    inspect: bool = Form(default=True),
+    # Read as text, not `bool`: FastAPI 0.159 interprets a *missing* boolean
+    # form field as an unchecked checkbox (False), so a `bool` default of True
+    # silently became "do not inspect" for clients that omit the flag.
+    inspect: str | None = Form(default=None),
 ) -> dict[str, Any]:
     """Stage an uploaded folder tree for review, then report its galleries.
 
@@ -784,6 +787,13 @@ async def upload_local_folder(
     if _scan_lock.locked():
         raise HTTPException(status_code=409, detail="local-lib scan is running")
     _reject_if_tag_reapply_running("upload")
+
+    # Absent flag means "inspect" (the documented default); anything a client
+    # sends that parses as a false-y word opts out.
+    if inspect is None:
+        do_inspect = True
+    else:
+        do_inspect = str(inspect).strip().lower() not in {"0", "false", "off", "no"}
 
     safe_folder = _safe_rel_file_path(folder_name)
     if not safe_folder:
@@ -830,7 +840,7 @@ async def upload_local_folder(
         raise HTTPException(status_code=400, detail="no files saved")
 
     try:
-        report = inspect_staged_galleries(batch_id) if inspect else {}
+        report = inspect_staged_galleries(batch_id) if do_inspect else {}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"gallery inspection failed: {e}")
 

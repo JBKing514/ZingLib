@@ -10,6 +10,10 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.2.2] - 2026-11-24
+
+- Fixed the CSRF mismatch after a long-lived session is refreshed: /api/auth/csrf issues a new token, but auth_guard's post-route cookie refresh overwrote it with the old token from the request. The browser then held one token while the page sent another, so mutating requests such as PUT /api/config answered 403 (including over a Tailscale HTTPS proxy). The guard now keeps the token the route just issued.
+
 ## [1.2.1] - 2026-11-24
 
 - Fixed the long-press gallery picker gesture conflict: pressing a card no longer re-renders the whole feed, a vertical pan cancels the 430ms hold before the picker opens, and body scrolling is locked only after the hold is confirmed.

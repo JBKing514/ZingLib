@@ -216,7 +216,7 @@
               <v-card
                 :ref="(el) => registerFeedCard(el, item)"
                 class="home-card"
-                :class="{ compact: homeViewMode === 'compact', 'card-pressing': cardPressingKey === previewItemKey(item) }"
+                :class="{ compact: homeViewMode === 'compact' }"
                 variant="flat"
                 @touchstart.passive="onCardTouchStart(item, itemIndex, $event)"
                 @touchmove.passive="onCardTouchMove($event)"
@@ -779,6 +779,14 @@ const SHELL_CLICK_KEEPS_PREVIEW = [
 // touchend commits the selection and the picker is gone the moment it appears.
 const LONG_PRESS_OPEN_GRACE_MS = 260;
 
+// A long press is meant to stay put. The browser owns vertical panning from the
+// first movement, so any real vertical travel before the 430ms timer fires means
+// the hand is scrolling, not holding: cancel the hold instead of opening a picker
+// into a gesture the browser has already claimed. Horizontal scrub is allowed a
+// little more slack, because untouched jitter on a held finger is usually lateral.
+const LONG_PRESS_MOVE_SLOP = 12;
+const LONG_PRESS_VERTICAL_SLOP = 8;
+
 // Shared singleton: the shell already owns the probe, this page only reads the
 // result and offers the switch. Calling the composable again is free.
 const dualScreen = useDualScreen();
@@ -842,17 +850,22 @@ export default {
       _longPressStartX: 0,
       _longPressStartY: 0,
       _longPressMoveX: 0,
+      _longPressMoveY: 0,
       _longPressBaseIndex: 0,
       _longPressSuppressClickUntil: 0,
       // When the picker went up, so the end event from its opening touch can be
       // told apart from a real selection.
       _longPressOpenedAt: 0,
       _longPressAnchorY: 0,
-      // The `previewItemKey` of the card the finger is currently resting on.
-      // Drives the `.card-pressing` class while the long-press timer runs. The
-      // class suppresses selection/callouts without changing touch-action, so a
-      // normal vertical scroll remains native from the first movement.
-      cardPressingKey: "",
+      // The class suppresses selection/callouts without changing touch-action, so a
+      // normal vertical scroll remains native from the first movement. Marking the
+      // DOM element directly keeps this out of the render graph: a touchstart must
+      // not re-render the whole feed just to put one card into its pressed state.
+      _pressedCardEl: null,
+      // Set once per gesture when vertical travel (or too much travel) means the
+      // browser owns the pan. It is reset at touchstart, not at close, so a single
+      // gesture cannot re-enter the abort path on every move event.
+      _longPressCancelled: false,
       // The offsets themselves live in feedScrollMemory (module scope, so they
       // outlive a remount); these two only guard the restore in flight.
       _feedRestoreUntil: 0,
@@ -868,7 +881,7 @@ export default {
       // rail or resurrecting the pane.
       _previewCloseSeq: 0,
       _longPressBodyPrevOverflow: "",
-      _longPressAbortOpen: false,
+      _longPressBodyLocked: false,
     };
   },
   computed: {
@@ -1238,7 +1251,7 @@ export default {
       return 1;
     },
     openLongPressPicker(item, index, touch) {
-      if (this._longPressAbortOpen) return;
+      if (this._longPressCancelled) return;
       const rows = Array.isArray(this.filteredHomeItems) ? this.filteredHomeItems : [];
       const cols = Math.max(1, Number(this.homeGridColumns() || 1));
       const i = Math.max(0, Math.min(rows.length - 1, Number(index || 0)));
@@ -1274,26 +1287,31 @@ export default {
         clearTimeout(this._longPressTimer);
         this._longPressTimer = null;
       }
+      // Releasing the press mark is what hands the card back to the browser:
+      // vertical scrolling and (after a real tap) the click both resume.
+      if (this._pressedCardEl) {
+        this._pressedCardEl.classList?.remove("card-pressing");
+        this._pressedCardEl = null;
+      }
       this._longPressActive = false;
       // The shell reads this store flag before the picker is visible as well as
       // while it is open. Clear it on every exit rather than waiting for the
       // `longPressPickerOpen` watcher to run on a later render tick.
-      this.longPressPickerActive = false;
+      if (this.longPressPickerActive) this.longPressPickerActive = false;
       this._longPressOpenedAt = 0;
-      // Releasing the press mark is what hands the card back to the browser:
-      // vertical scrolling and (after a real tap) the click both resume.
-      this.cardPressingKey = "";
       this.setLongPressBodyLock(false);
       if (force) {
         this._longPressSuppressClickUntil = Date.now() + 280;
       }
-      this.longPressPickerOpen = false;
-      this.longPressPickerItems = [];
-      this.longPressPickerLayout = null;
-      this.longPressPickerIndex = 0;
-      this._longPressBaseIndex = 0;
-      this._longPressAnchorY = 0;
-      this._longPressAbortOpen = false;
+      if (this.longPressPickerOpen) this.longPressPickerOpen = false;
+      if (this.longPressPickerItems.length) this.longPressPickerItems = [];
+      if (this.longPressPickerLayout !== null) this.longPressPickerLayout = null;
+      if (this.longPressPickerIndex !== 0) this.longPressPickerIndex = 0;
+      if (this._longPressBaseIndex !== 0) this._longPressBaseIndex = 0;
+      if (this._longPressAnchorY !== 0) this._longPressAnchorY = 0;
+      // `_longPressCancelled` deliberately survives the close: it belongs to the
+      // gesture, is reset by the next touchstart, and keeps a repeated touchmove
+      // from re-entering the same abort branch.
     },
     onCardTouchStart(item, itemIndex, event) {
       if (Number(this.homeGridColumns() || 1) <= 1) return;
@@ -1301,20 +1319,32 @@ export default {
       const touch = event?.touches?.[0] || null;
       if (!touch) return;
       this.closeLongPressPicker();
+      this._longPressCancelled = false;
       // Claim the pointer for the gallery during the 430ms arming window. The
       // sidebar listens on `window`, so waiting until the picker opens leaves a
       // race in which the drawer can consume the same drag first.
       this.longPressPickerActive = true;
       // Mark the card as "the browser does not own this touch" *before* the
       // 430ms timer can fire, so the selection / callout machinery never starts
-      // and there is nothing to cancel the gesture with.
-      this.cardPressingKey = this.previewItemKey(item);
-      this._longPressAbortOpen = false;
+      // and there is nothing to cancel the gesture with. The mark lives on the
+      // card's DOM node, not in a rendered class binding, so the feed does not
+      // re-render for a single press.
+      this._pressedCardEl = event?.currentTarget || null;
+      this._pressedCardEl?.classList?.add("card-pressing");
       this._longPressStartX = Number(touch.clientX || 0);
       this._longPressStartY = Number(touch.clientY || 0);
       this._longPressMoveX = this._longPressStartX;
+      this._longPressMoveY = this._longPressStartY;
       this._longPressTimer = setTimeout(() => {
         this._longPressTimer = null;
+        if (this._longPressCancelled) return;
+        const dx = Math.abs(this._longPressMoveX - this._longPressStartX);
+        const dy = Math.abs(this._longPressMoveY - this._longPressStartY);
+        if (dy > LONG_PRESS_VERTICAL_SLOP || dx > LONG_PRESS_MOVE_SLOP) {
+          this._longPressCancelled = true;
+          this.closeLongPressPicker();
+          return;
+        }
         this.openLongPressPicker(item, itemIndex, touch);
       }, 430);
     },
@@ -1323,11 +1353,14 @@ export default {
       if (!touch) return;
       const x = Number(touch.clientX || 0);
       const y = Number(touch.clientY || 0);
+      this._longPressMoveX = x;
+      this._longPressMoveY = y;
       if (!this._longPressActive) {
+        if (this._longPressCancelled) return;
         const dx = Math.abs(x - Number(this._longPressStartX || 0));
         const dy = Math.abs(y - Number(this._longPressStartY || 0));
-        if (dx > 12 || dy > 12) {
-          this._longPressAbortOpen = true;
+        if (dy > LONG_PRESS_VERTICAL_SLOP || dx > LONG_PRESS_MOVE_SLOP) {
+          this._longPressCancelled = true;
           this.closeLongPressPicker();
         }
         return;
@@ -1337,12 +1370,11 @@ export default {
         const rect = host.getBoundingClientRect();
         const out = x < rect.left || x > rect.right || y < rect.top || y > rect.bottom;
         if (out) {
-          this._longPressAbortOpen = true;
+          this._longPressCancelled = true;
           this.closeLongPressPicker(true);
           return;
         }
       }
-      this._longPressMoveX = x;
       const step = 64;
       const delta = x - Number(this._longPressStartX || 0);
       const shift = Math.round(delta / step);
@@ -1355,7 +1387,7 @@ export default {
         this.closeLongPressPicker();
         return;
       }
-      if (this._longPressAbortOpen) {
+      if (this._longPressCancelled) {
         this.closeLongPressPicker(true);
         return;
       }
@@ -1692,12 +1724,16 @@ export default {
       const body = document.body;
       if (!body) return;
       if (locked) {
+        if (this._longPressBodyLocked) return;
         this._longPressBodyPrevOverflow = String(body.style.overflow || "");
         body.style.overflow = "hidden";
+        this._longPressBodyLocked = true;
         return;
       }
+      if (!this._longPressBodyLocked) return;
       body.style.overflow = String(this._longPressBodyPrevOverflow || "");
       this._longPressBodyPrevOverflow = "";
+      this._longPressBodyLocked = false;
     },
     closeDesktopHoverPreview() {
       if (this._hoverLeaveTimer) {

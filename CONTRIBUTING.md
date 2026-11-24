@@ -18,6 +18,17 @@
 
 ---
 
+## 自动化 agent 工作流
+
+`agent-dev` 是从 `main` 分出的长期集成分支：agent 的自动 PR 与合并都只落到 `agent-dev`，人工核对后再由用户把它合并到 `main`。
+
+1. **默认目标分支**：agent 发起的所有 PR 必须指定 `--base agent-dev`（例如 `gh pr create --base agent-dev`），严禁向 `main` 发起 PR。
+2. **分支命名**：每次任务都从最新的 `origin/agent-dev` 切出独立子分支，例如 `agent/<任务名>`；不要在 `agent-dev` 上直接提交，避免并发任务在共享分支上冲突。
+3. **自检后再合并**：合入 `agent-dev` 前必须确认本地构建/测试通过（`scripts/` 下的发布守卫、前端 `npm ci && npm run build && node --test test_*.mjs`、后端 `webapi/test_*.py`）。若合并时遇到冲突，先 `git pull origin agent-dev` 并在本地解决，严禁强推。
+4. **交付即清理**：任务合入 `agent-dev` 后立刻删掉该任务的子分支；PR 关闭或合并后不再需要的机器生成分支（`dependabot/*` 等）也一并删除。除 `main` 与 `agent-dev` 外，`origin` 上不应残留已完成任务的分支。唯一的例外是卡住、需要保留现场供人排查——这时保留分支，并在 issue 里写明保留原因和后续处理方式。
+
+---
+
 ## 比较欢迎的方向
 
 * **算法**：视觉（SigLIP）与文本 / 元数据通道的融合权重、推荐势能模型的参数与兴趣漂移。

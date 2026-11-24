@@ -34,7 +34,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       # Three scripts, all stdlib-only. They are tracked on purpose (unlike the
       # workspace-level `tools/` guards) so a clone can run them.
       - name: migration single source
@@ -66,7 +66,7 @@ jobs:
         run: node --test test_*.mjs
       # The backend job mounts these exactly where the Dockerfile does, so the
       # app-importing tests see the version.json and PWA assets they expect.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: webapp-dist
           path: Docker/main/webapp/dist
@@ -100,12 +100,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: install runtime + test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r Docker/main/requirements.txt -r Docker/main/requirements-dev.txt
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: webapp-dist
           path: Docker/main/webapi/static
@@ -182,7 +182,7 @@ jobs:
           }
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}

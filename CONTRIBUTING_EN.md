@@ -31,6 +31,7 @@ If you do want to change something, the notes below describe how the project cur
 1. **Default target branch**: every agent PR must specify `--base agent-dev` (for example `gh pr create --base agent-dev`); a PR to `main` is forbidden.
 2. **Branch naming**: each task cuts an independent branch from the latest `origin/agent-dev`, for example `agent/<task-name>`; do not commit directly on `agent-dev`, so concurrent tasks cannot collide on a shared branch.
 3. **Self-check before merge**: confirm the local build/tests pass before merging into `agent-dev` (the `scripts/` release guards, frontend `npm ci && npm run build && node --test test_*.mjs`, backend `webapi/test_*.py`). On conflicts, `git pull origin agent-dev` and resolve locally; never force-push.
+4. **Deliver clean**: delete the task branch as soon as it is merged into `agent-dev`, and drop machine-generated branches (`dependabot/*` and friends) once their PR is closed or merged. `origin` should carry nothing but `main` and `agent-dev` besides those. The one exception is being stuck mid-task: keep the branch, and say in the issue why it is being kept and what happens next.
 
 ---
 

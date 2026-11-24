@@ -10,6 +10,10 @@ versions follow Semantic Versioning:
 * `minor` -- new behaviour, no action needed
 * `patch` -- fixes only
 
+## [1.2.1] - 2026-11-24
+
+- Fixed the long-press gallery picker gesture conflict: pressing a card no longer re-renders the whole feed, a vertical pan cancels the 430ms hold before the picker opens, and body scrolling is locked only after the hold is confirmed.
+
 ## [1.2.0] - 2026-11-03
 
 - Work in progress: the 1.2.0 feature set is being built on this branch; see ROADMAP.md for the bucket.

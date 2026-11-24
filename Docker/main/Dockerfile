@@ -1,7 +1,7 @@
 # Base images are pinned by digest: a floating tag can be republished, which
 # makes "v1.0.0" build to different contents on different days. Bump the digest
 # deliberately, in its own commit. Read the current one with:
-#   docker images --digests python:3.11-slim node:22-bookworm-slim
+#   docker images --digests python:3.12-slim node:22-bookworm-slim
 FROM node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS webbuild
 
 WORKDIR /webapp
@@ -19,7 +19,7 @@ COPY webapp/src /webapp/src
 COPY webapp/public /webapp/public
 RUN npm ci --no-audit --no-fund && npm run build
 
-FROM python:3.11-slim@sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

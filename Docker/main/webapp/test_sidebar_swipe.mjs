@@ -283,18 +283,22 @@ test("a long-press in progress owns the pointer, whether or not the picker is up
   // And the dashboard must raise it from the moment the press starts, not when
   // the picker opens.
   const dash = read("./src/views/DashboardScopePage.vue");
-  assert.match(dash, /cardPressingKey: ""/, "state for the pressed card");
-  assert.match(dash, /this\.cardPressingKey = this\.previewItemKey\(item\);/,
+  assert.match(dash, /_pressedCardEl: null/, "state for the pressed card");
+  assert.match(dash, /this\._pressedCardEl = event\?\.currentTarget \|\| null;/,
     "raised on touchstart, before the 430ms timer");
-  assert.match(dash, /this\.cardPressingKey = "";/,
+  assert.match(dash, /this\._pressedCardEl\?\.classList\?\.add\("card-pressing"\)/,
+    "the pressed mark is applied to the card element, not a rendered binding");
+  assert.match(dash, /this\._pressedCardEl\.classList\?\.remove\("card-pressing"\)/,
     "and cleared when the press ends");
 });
 
 test("the pressed card preserves native vertical scrolling until the picker opens", () => {
   const dash = read("./src/views/DashboardScopePage.vue");
   // `.card-pressing` remains useful for suppressing selection and callouts.
-  assert.match(dash, /'card-pressing': cardPressingKey === previewItemKey\(item\)/,
-    "the class is bound to the pressed card");
+  assert.match(dash, /this\._pressedCardEl\?\.classList\?\.add\("card-pressing"\)/,
+    "the class is applied to the pressed card element");
+  assert.doesNotMatch(dash, /'card-pressing': cardPressingKey === previewItemKey\(item\)/,
+    "the class is not a reactive binding that would rebuild the whole feed");
   assert.match(dash, /\.home-card \{\s*touch-action: pan-y pinch-zoom;/,
     "cards allow native vertical panning from touchstart");
   assert.doesNotMatch(dash, /\.home-card\.card-pressing\s*\{[^}]*touch-action:\s*none;/,
@@ -306,6 +310,20 @@ test("the pressed card preserves native vertical scrolling until the picker open
   // The picker's own scrub axis needs the same protection.
   const host = dash.slice(dash.indexOf(".longpress-picker-host {"), dash.indexOf(".longpress-picker-card {"));
   assert.match(host, /touch-action: none;/, "the picker host does not let the browser claim the drag");
+});
+
+test("a vertical pan cancels the hold once and leaves the body scrolling", () => {
+  const dash = read("./src/views/DashboardScopePage.vue");
+  assert.match(dash, /const LONG_PRESS_VERTICAL_SLOP = 8;/,
+    "vertical travel cancels before the picker opens");
+  assert.match(dash, /_longPressCancelled: false/, "the cancel flag is reset per gesture");
+  assert.match(dash, /if \(this\._longPressCancelled\) return;/,
+    "the abort path does not run on every touchmove");
+  assert.match(dash, /this\._longPressCancelled = true;[\s\S]{0,80}this\.closeLongPressPicker\(\);/,
+    "vertical travel closes the arming window");
+  assert.match(dash, /setTimeout\([\s\S]*?dy > LONG_PRESS_VERTICAL_SLOP[\s\S]*?openLongPressPicker/,
+    "the timer checks the latest position before opening");
+  assert.match(dash, /if \(this\._longPressBodyLocked\) return;/, "the body lock is idempotent");
 });
 
 test("a cancel cannot close a picker that is already open", () => {

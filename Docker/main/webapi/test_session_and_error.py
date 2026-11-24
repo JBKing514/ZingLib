@@ -336,10 +336,94 @@ def test_mutating_routes_require_admin_role():
         _drop_test_user(plain_uid)
 
 
+def test_csrf_bootstrap_survives_session_refresh():
+    """A page reload must not leave the browser holding the previous CSRF token.
+
+    `auth_guard` refreshes cookies when a session is near half its TTL. The
+    `/api/auth/csrf` route issues a new token and sets its cookie, but the guard
+    runs after the route; without the fix it overwrote that cookie with the old
+    token from the request. The frontend then sent the new token as a header and
+    the old one as a cookie, and every mutating request answered 403.
+    """
+    print("--- Test 5: CSRF bootstrap survives session refresh ---")
+    dsn = db_dsn()
+    if not dsn:
+        print("Skip: Database not configured")
+        return
+    if skip_without_testclient("test 5 -- CSRF bootstrap probe"):
+        return
+
+    uid = str(uuid.uuid4())
+    stamp = int(time.time())
+    try:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ui_users (uid, username, password_hash, role, disabled, created_at) "
+                    "VALUES (%s::uuid, %s, 'hash', 'admin', false, now())",
+                    (uid, f"testuser_csrf_{stamp}"),
+                )
+            conn.commit()
+        _invalidate_bootstrap_cache()
+
+        token, sess = create_session(dsn, uid, ttl_hours=2)
+        old_csrf = str(sess.get("csrf_token") or "")
+        # Put the session in the refresh window (`auth_guard` uses the 72h config
+        # default, so any token minted with 2h is already inside it).
+        now = datetime.now(timezone.utc)
+        short_expiry = datetime.fromtimestamp(now.timestamp() + 1800, tz=timezone.utc)
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE ui_sessions SET expires_at=%s WHERE sid=%s::uuid",
+                    (short_expiry, sess["sid"]),
+                )
+            conn.commit()
+
+        client = TestClient(app)
+        client.cookies.set(AUTH_COOKIE_NAME, token)
+        client.cookies.set(AUTH_CSRF_COOKIE_NAME, old_csrf)
+
+        r = client.get("/api/auth/csrf")
+        print(f"GET /api/auth/csrf -> {r.status_code}")
+        assert r.status_code == 200, f"csrf bootstrap failed: {r.status_code}: {r.text[:200]}"
+        new_csrf = str(r.json().get("csrf_token") or "")
+        assert new_csrf and new_csrf != old_csrf, "the route must issue a fresh token"
+
+        # The test client's jar can hold the pre-seeded cookie and the response
+        # cookie for two domains, so read the response's last `zgl_csrf` header:
+        # that is the one the browser stores for this origin.
+        csrf_headers = [
+            h for h in r.headers.get_list("set-cookie") if h.startswith(AUTH_CSRF_COOKIE_NAME + "=")
+        ]
+        assert csrf_headers, "the response must carry a CSRF cookie"
+        browser_cookie = csrf_headers[-1].split(";")[0].split("=", 1)[1]
+        print(f"last zgl_csrf header == returned token: {browser_cookie == new_csrf}")
+        assert browser_cookie == new_csrf, (
+            "the session refresh overwrote the freshly issued CSRF cookie"
+        )
+
+        # A harmless POST that only validates input: reaching the route's own 400
+        # proves the guard accepted the header and the cookie together.
+        r = client.post(
+            "/api/local-lib/meta/preview",
+            json={},
+            headers={"x-csrf-token": new_csrf},
+        )
+        print(f"POST meta/preview -> {r.status_code}")
+        assert r.status_code == 400, (
+            f"expected the route's validation to answer 400, got {r.status_code}: {r.text[:200]}"
+        )
+        print("Success: the bootstrap token and the browser cookie agree")
+    finally:
+        _drop_test_user(uid)
+
+
 if __name__ == "__main__":
     test_path_length_error_suppression()
     test_expected_validation_error_suppresses_traceback()
     test_sliding_session_renewal()
     test_migration_timeout()
     test_mutating_routes_require_admin_role()
+    test_csrf_bootstrap_survives_session_refresh()
     print("ALL TESTS PASSED SUCCESSFULLY!")

@@ -230,6 +230,13 @@ async def auth_guard(request: Request, call_next):
     extend_cookies = getattr(request.state, "auth_extend_cookies", None)
     if extend_cookies:
         t_val, c_val, cfg_val = extend_cookies
+        # `/api/auth/csrf` issues a new token and sets its cookie. Refreshing the
+        # session afterwards must keep that token, not overwrite it with the old
+        # cookie from the request; otherwise the next mutating request answers 403
+        # even though both the body and the browser appear to have a token.
+        issued = str(getattr(request.state, "auth_csrf_issued", "") or "")
+        if issued:
+            c_val = issued
         _auth_set_cookie(response, t_val, cfg_val, csrf_token=c_val, request=request)
 
     return response

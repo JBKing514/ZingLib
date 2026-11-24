@@ -250,6 +250,13 @@ def auth_csrf(request: Request, response: Response) -> dict[str, Any]:
     cfg, _ = resolve_config()
     csrf_token = issue_csrf_token(dsn, token)
     _auth_set_cookie(response, token, cfg, csrf_token=csrf_token, request=request)
+    # `auth_guard` refreshes cookies *after* the route runs. When a session is
+    # extended, it would otherwise rewrite `zgl_csrf` with the token the browser
+    # sent on this request -- the old one -- while the body carries the freshly
+    # issued token. The browser then stores the old cookie and every mutating
+    # request fails CSRF verification until the page is reloaded. Mark the token
+    # so the guard's refresh keeps the value this route just issued.
+    request.state.auth_csrf_issued = csrf_token
     return {"ok": True, "csrf_token": csrf_token}
 
 

@@ -10,4 +10,4 @@
 # Pinned for the same reason as requirements.txt: an unpinned test dependency
 # turns "the suite is green" into a claim about a different day's dependency
 # tree.
-httpx2==2.13.1
+httpx2==2.16.0

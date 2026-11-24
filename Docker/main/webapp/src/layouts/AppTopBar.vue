@@ -120,7 +120,11 @@ const handleCycleTheme = async () => {
 
 <style scoped>
 .app-header {
-  background-color: #000000;
+  /* Vuetify 4 puts its component styles in cascade layers; the unlayered app
+     CSS wins, so `color="surface"` alone stopped controlling the bar. Use the
+     resolved theme surface explicitly: light deployments stay light, dark
+     deployments stay dark, and private mode's palette still overrides this. */
+  background-color: rgb(var(--v-theme-surface));
 }
 
 .notice-title {

@@ -26,6 +26,8 @@
 2. **分支命名**：每次任务都从最新的 `origin/agent-dev` 切出独立子分支，例如 `agent/<任务名>`；不要在 `agent-dev` 上直接提交，避免并发任务在共享分支上冲突。
 3. **自检后再合并**：合入 `agent-dev` 前必须确认本地构建/测试通过（`scripts/` 下的发布守卫、前端 `npm ci && npm run build && node --test test_*.mjs`、后端 `webapi/test_*.py`）。若合并时遇到冲突，先 `git pull origin agent-dev` 并在本地解决，严禁强推。
 4. **交付即清理**：任务合入 `agent-dev` 后立刻删掉该任务的子分支；PR 关闭或合并后不再需要的机器生成分支（`dependabot/*` 等）也一并删除。除 `main` 与 `agent-dev` 外，`origin` 上不应残留已完成任务的分支。唯一的例外是卡住、需要保留现场供人排查——这时保留分支，并在 issue 里写明保留原因和后续处理方式。
+5. **审核后才合并**：只有通过 `in_review` 的改动才合入 `agent-dev`；不要把还在 `todo` / `in_progress` 的中间结果提前合并。审核发现问题的任务回到 `todo`，不要直接再开一条新的同类任务。
+6. **版本与 tag 纪律**：只有在任务明确给出版本号或明确要求发布时才运行 `scripts/bump_version.py` 并打 tag；没有明确版本时，只把代码合入 `agent-dev`，版本号和 tag 留给人工发布环节决定。
 
 ---
 

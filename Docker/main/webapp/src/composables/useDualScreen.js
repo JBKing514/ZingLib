@@ -197,7 +197,12 @@ function apply() {
   const forced = queryFlag("duo") || state.debug;
   const override = hingeOverride();
 
-  const isDuo = DUO_MODEL.test(state.model);
+  // `userAgentData` is the precise source, but it is absent on some browsers
+  // (and on older Android builds). Fall back to the UA string so a Surface Duo
+  // still reaches the automatic layout on a secure Tailscale/HTTPS page instead
+  // of silently degrading to the single-panel mobile arrangement.
+  const ua = String(navigator.userAgent || "");
+  const isDuo = DUO_MODEL.test(state.model) || DUO_MODEL.test(ua);
 
   // A folded device is a laptop or a phone -- not two panels side by side.
   const folded = posture === "folded";
